@@ -8,7 +8,7 @@ import {getSecurityHistory,securityHistoryInfo} from '@/lib/security-history';
 export const mcpTools = [
   {
     name:'get_security_history',
-    description:'按带交易所前缀代码读取沪深北股票/ETF历史K线。支持1d及1/5/15/30/60分钟；1分钟仅不复权，窗口受限，必须读取quality、coverage与实际日期。不混拼来源/复权批次。价格人民币元，volume手，amount人民币元。日K timestamp是当地日期零点键，分钟timestamp是K线结束标签；原始时间保留。未完成K线is_final=false、未知null。默认升序每页200条，用next_cursor翻页；数据变化可令cursor过期。include_raw附原始响应。只返回行情，不计算指标和信号。',
+    description:'按带交易所前缀代码读取沪深北股票/ETF历史K线。支持1d及1/5/15/30/60分钟；1分钟仅不复权，窗口受限，必须读取quality、coverage与实际日期。东方财富不可用时整段切换腾讯独立历史，不混拼来源/复权批次；腾讯缺少逐根成交额时amount=null且quality=partial。价格人民币元，volume手，amount人民币元。日K timestamp是当地日期零点键，分钟timestamp是K线结束标签；原始时间保留。未完成K线is_final=false、未知null。默认升序每页200条，用next_cursor翻页；refresh=false时分页只读绑定提供方的成功缓存，不重新请求上游；数据变化可令cursor过期。include_raw附原始响应。只返回行情，不计算指标和信号。',
     inputSchema:{type:'object',properties:{symbol:{type:'string',pattern:'^(sh|sz|bj)[0-9]{6}$',description:'如sh563360、sz159842、sh600519、sz000001、bj920002'},period:{type:'string',enum:['1m','5m','15m','30m','60m','1d'],default:'1d'},start_date:{type:'string',pattern:'^[0-9]{4}-[0-9]{2}-[0-9]{2}$'},end_date:{type:'string',pattern:'^[0-9]{4}-[0-9]{2}-[0-9]{2}$'},adjust:{type:'string',enum:['none','qfq','hfq'],default:'none',description:'1分钟仅none；其他周期按供应商fqt获取'},refresh:{type:'boolean',default:false},include_raw:{type:'boolean',default:false},limit:{type:'integer',minimum:1,maximum:500,default:200},cursor:{type:'string',description:'上次响应next_cursor，查询口径保持一致'}},required:['symbol','start_date','end_date'],additionalProperties:false},annotations:{readOnlyHint:true},
   },
   {
@@ -61,7 +61,7 @@ export async function POST(req: Request) {
   if (id === undefined) return new Response(null, {status:202});
   let result: any;
   if (method === 'server/discover') result = {supportedVersions:['2026-07-28'], capabilities:{tools:{}}};
-  else if (method === 'initialize') result = {protocolVersion:params?.protocolVersion || '2026-07-28', serverInfo:{name:'asset-observatory', version:'1.5.0'}, capabilities:{tools:{}}};
+  else if (method === 'initialize') result = {protocolVersion:params?.protocolVersion || '2026-07-28', serverInfo:{name:'asset-observatory', version:'1.5.1'}, capabilities:{tools:{}}};
   else if (method === 'ping') result = {};
   else if (method === 'tools/list') result = {tools:mcpTools};
   else if (method === 'tools/call') {

@@ -1,4 +1,4 @@
-export type DataIssue = {code:string; message:string; retryable:boolean; source?:string; source_url?:string; http_status?:number;retry_after_seconds?:number;causes?:DataIssue[]};
+export type DataIssue = {code:string; message:string; retryable:boolean; source?:string; source_url?:string; http_status?:number;retry_after_seconds?:number;response_body_excerpt?:string;response_headers?:Record<string,string>;causes?:DataIssue[]};
 export class DataError extends Error {
   constructor(public issue:DataIssue){super(issue.message);this.name='DataError'}
 }
@@ -8,7 +8,7 @@ export function dataIssue(error:unknown, sourceUrl?:string):DataIssue {
   const timeout=e?.name==='TimeoutError'||e?.name==='AbortError';
   return {code:timeout?'UPSTREAM_TIMEOUT':'INVALID_RESPONSE',message:e?.message||String(error),retryable:timeout,...(sourceUrl?{source_url:sourceUrl}:{})};
 }
-export async function fetchText(url:string, options:{headers?:Record<string,string>;encoding?:string;timeoutMs?:number;attempts?:number}={}) {
+export async function fetchText(url:string, options:{headers?:Record<string,string>;encoding?:string;timeoutMs?:number;attempts?:number;captureErrorBody?:boolean}={}) {
   const attempts=Math.min(2,Math.max(1,options.attempts??2));
   let last:DataIssue|undefined;
   for(let attempt=1;attempt<=attempts;attempt++){
@@ -18,8 +18,9 @@ export async function fetchText(url:string, options:{headers?:Record<string,stri
         const retryable=r.status===429||r.status>=500;
         // Avoid leaving an unused stream open before the next attempt.
         const retryAfter=r.headers.get('Retry-After');const seconds=retryAfter?Number(retryAfter):NaN;
-        await r.body?.cancel();
-        throw new DataError({code:'UPSTREAM_HTTP',message:`上游 HTTP ${r.status}`,retryable,http_status:r.status,source_url:url,...(Number.isFinite(seconds)?{retry_after_seconds:seconds}:{})});
+        let evidence:{}={};
+        if(options.captureErrorBody){const headers:Record<string,string>={};for(const k of ['content-type','server','cf-ray','via','retry-after','x-cache']){const v=r.headers.get(k);if(v)headers[k]=v}let excerpt='';try{const reader=r.body?.getReader();if(reader){const chunks:number[]=[];while(chunks.length<2048){const {done,value}=await reader.read();if(done)break;chunks.push(...value.slice(0,2048-chunks.length));}await reader.cancel();excerpt=new TextDecoder().decode(new Uint8Array(chunks));}}catch{}evidence={response_body_excerpt:excerpt,response_headers:headers};}else await r.body?.cancel();
+        throw new DataError({code:'UPSTREAM_HTTP',message:`上游 HTTP ${r.status}`,retryable,http_status:r.status,source_url:url,...evidence,...(Number.isFinite(seconds)?{retry_after_seconds:seconds}:{})});
       }
       return {text:new TextDecoder(options.encoding??'utf-8').decode(await r.arrayBuffer()),attempts:attempt,url};
     }catch(error){

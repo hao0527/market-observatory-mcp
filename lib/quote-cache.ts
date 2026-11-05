@@ -14,16 +14,18 @@ function remember(record:SavedQuote){const previous=memory.get(record.key);if(pr
   if(memory.size>=1024)memory.delete(memory.keys().next().value!);memory.set(record.key,record)}
 function validSaved(record:SavedQuote|null){return record&&Date.parse(record.expires_at)>Date.now()?record:null}
 function presented(record:SavedQuote,delivery:string,degraded=false,error?:unknown){return {...record.payload,delivery,degraded,cache_backend:context.getStore()?'durable':'memory',last_success_at:record.fetched_at,retrieved_at:new Date().toISOString(),...(error?{upstream_error:dataIssue(error)}:{})}}
-export async function loadQuote(key:string,loader:()=>Promise<any>,options:{refresh?:boolean;ttlMs?:number;acceptReplacement?:(previous:any,next:any)=>boolean}={}) {
+export async function loadQuote(key:string,loader:()=>Promise<any>,options:{refresh?:boolean;ttlMs?:number;cacheOnly?:boolean|'fresh';cacheFresh?:(payload:any,ageMs:number)=>boolean;acceptReplacement?:(previous:any,next:any)=>boolean}={}) {
   const backend=context.getStore();
   const existing=validSaved(memory.get(key)??null);
-  if(!options.refresh&&existing&&Date.now()-Date.parse(existing.fetched_at)<(options.ttlMs??60000))return presented(existing,'memory_cache');
-  if(pending.has(key))return pending.get(key)!;
+  const fresh=(r:SavedQuote)=>options.cacheFresh?options.cacheFresh(r.payload,Date.now()-Date.parse(r.fetched_at)):Date.now()-Date.parse(r.fetched_at)<(options.ttlMs??60000);
+  if(!options.refresh&&existing&&(options.cacheOnly===true||fresh(existing)))return presented(existing,'memory_cache');
+  if(!options.cacheOnly&&pending.has(key))return pending.get(key)!;
   const work=(async()=>{
     let durable:SavedQuote|null=null;let storageIssue:string|undefined;
     if(backend){try{durable=validSaved(await backend.read(key))}catch{storageIssue='持久缓存读取失败'}}
     const last=newer(existing,durable);
-    if(!options.refresh&&last&&Date.now()-Date.parse(last.fetched_at)<(options.ttlMs??60000)){remember(last);return {...presented(last,durable===last?'durable_cache':'memory_cache'),...(storageIssue?{cache_warning:storageIssue}:{})}}
+    if(!options.refresh&&last&&(options.cacheOnly===true||fresh(last))){remember(last);return {...presented(last,durable===last?'durable_cache':'memory_cache'),...(storageIssue?{cache_warning:storageIssue}:{})}}
+    if(options.cacheOnly)throw new DataError({code:'CURSOR_CACHE_MISS',message:'分页所需的成功缓存已不存在，请从第一页重新读取',retryable:true});
     try{
       const payload=await loader();
       if(last&&options.acceptReplacement&&!options.acceptReplacement(last.payload,payload))throw new DataError({code:'INCOMPLETE_HISTORY_REFRESH',message:'本次历史刷新比缓存缺少已取得的记录，保留更完整缓存',retryable:true,source:payload.source,source_url:payload.source_url});
@@ -41,5 +43,6 @@ export async function loadQuote(key:string,loader:()=>Promise<any>,options:{refr
       throw error;
     }
   })();
+  if(options.cacheOnly)return work;
   pending.set(key,work);try{return await work}finally{pending.delete(key)}
 }

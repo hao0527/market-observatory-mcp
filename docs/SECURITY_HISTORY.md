@@ -1,6 +1,6 @@
 # 股票 / ETF 历史K线（Schema 1.5）
 
-独立工具 `get_security_history`，与最新报价/盘口、全球快照和全球历史分开。数据仅来自东方财富，经核实后整理原始字段，不生成技术指标，不合成其他周期或换源混拼。
+独立工具 `get_security_history`，与最新报价/盘口、全球快照和全球历史分开。主源东方财富，不可用时可整段使用独立腾讯历史，经核实后整理原始字段，不生成技术指标，不合成其他周期或换源混拼。
 
 ## 参数
 
@@ -39,7 +39,7 @@
 
 1分钟实测可能忽略beg/end并只返回近期窗口。必须本地严格筛选，不会把11月数据回答成10月历史。覆盖不足为partial；完全不相交为unsupported/HISTORY_RANGE_UNAVAILABLE。其他周期没有数据时保留EMPTY_HISTORY及原因不确定性，不能仅凭空响应认定不存在或停牌。供应商范围是实测结果，不承诺固定天数或永久可用。
 
-quality：有数据且排定时段覆盖完整为available；缺段、缺记录、无已核实日历或含未完成K线为partial；交付的原未完成缓存已越过结束边界为stale；没有记录为unavailable；未验证复权或完全不支持的范围为unsupported。缺少排定K线可能是停牌、未上市、无成交或源缺失，coverage.missing_sessions的原因保持unknown，suspension_verified=false。
+quality：有数据且排定时段覆盖完整为available；缺段、缺记录、无已核实日历、缺失逐根成交额或含未完成K线为partial；交付的原未完成缓存已越过结束边界为stale；没有记录为unavailable；未验证复权或完全不支持的范围为unsupported。缺少排定K线可能是停牌、未上市、无成交或源缺失，coverage.missing_sessions的原因保持unknown，suspension_verified=false。
 
 history_refresh_status独立为succeeded/failed/not_attempted。degraded=true仅表示刷新失败后交付旧成功数据，不强行把有效历史标为unavailable。source_requests保留每段原fetched_at、delivery、缓存后端、刷新错误和供应商观察到的范围。顶层fetched_at为成功段最早读取时间，latest_fetched_at为最晚读取时间，每根与每段保留各自时间；retrieved_at为本次返回时间。
 
@@ -47,7 +47,7 @@ history_refresh_status独立为succeeded/failed/not_attempted。degraded=true仅
 
 ## 缓存、增量与分页
 
-复用现有D1 market_last_success和有限内存缓存，无新数据库schema；证券历史内存最多16块，避免扩大原报价缓存的内存占用。日K按自然季度，5/15/30/60分钟按自然周缓存；相邻/重叠日期请求复用已有块，仅获取缺少或过期的块。1分钟使用请求范围缓存，不建立完整分钟归档。请求最多三段并发，每段最多两次，429不立即重试。
+复用现有D1 market_last_success和有限内存缓存，无新数据库schema；证券历史内存最多16块，避免扩大原报价缓存的内存占用。日K按自然季度，5/15/30/60分钟按自然周缓存；相邻/重叠日期请求复用已有块，仅获取缺少或过期的块。1分钟使用请求范围缓存，不建立完整分钟归档。请求最多两段并发，主源一次、备用最多两次，429不立即重试。
 
 当前段日K TTL60秒、分钟TTL15秒；已结束不复权段TTL6小时；已结束复权段TTL1小时。沿用最长14天最近成功故障缓存，不承诺永久历史存储。正在形成的记录不长期当作完整数据缓存。
 
@@ -73,3 +73,17 @@ node scripts/test-security-history-live.mjs
 官方日历来源：[上交所](https://www.sse.com.cn/disclosure/announcement/general/c/c_20251222_10802507.shtml)、[深交所](https://www.szse.cn/disclosure/notice/general/t20251222_618087.html)、[北交所](https://www.bse.cn/important_news/200027428.html)。[上海交易时段](https://www.sse.com.cn/lawandrules/sselawsrules2025/trade/universal/c/c_20260424_10816492.shtml)。参数使用也与公开实现[AKShare fund_etf_em.py](https://github.com/akfamily/akshare/blob/main/akshare/fund/fund_etf_em.py)对照，实际支持仍以本轮源请求验收为准。
 
 盘后业务核实依据：[深交所2026年技术准备通知](https://investor.szse.cn/marketServices/technicalservice/notice/t20260424_620199.html)，其扩展品种安排不等于每只证券的启用时间已经核实，因此上述窗口明确保留不确定性。
+
+## 1.5.1 验收修复
+
+东方财富仍为主源；其请求错误保留实际HTTP状态、最多2048字节正文及白名单响应头，不把超时或其他异常统一映射成520。字段列表采用标准逗号形式；该调整不等于已证明520根因是URL编码。错误根因以Worker实际返回为准。主源最多一次尝试、两段并发；独立备用请求最多两次，429不立即重试。
+
+当主源无有效记录并且请求失败或范围为空时，整段尝试腾讯证券历史。已经交付的东方财富记录不与腾讯记录拼接；有有效主源缓存时保留原源及降级证据。腾讯日K使用fqkline接口，分钟使用mkline接口，实测分钟上限为近期320条。它不提供逐根成交额，amount=null并标partial，绝不乘收盘价估算或拼入另一源的成交额。其它未提供可选字段也为null。
+
+腾讯日线复权只接受明确qfqday/hfqday数组，不把请求参数被接受或返回day数组当作复权成功。腾讯分钟仅none。若东方财富临时失败而腾讯不能验证该复权，整体返回unavailable并分别保留两源错误，不能把一次520认定为周期/复权能力不支持。provider_version原样留存，但并未证明它是复权因子版本；factor_version仍为null。历史复权为供应商本次读取版本，point_in_time_supported=false，不冒充历史交易日当时可得的复权版本。不同供应商的hfq可能口径不同，same_adjustment_basis保留null。
+
+带cursor且refresh=false时只读绑定提供方的成功缓存，不因普通TTL过期重新访问上游；保留原fetched_at、refresh_status=not_attempted、degraded=false。若所需缓存不存在则CURSOR_EXPIRED，无上游刷新错误。refresh=true仍明确触发刷新，可能产生失败和降级。已经完整覆盖请求的已结束区间可使用6小时（none）/1小时（复权）普通缓存，不因所在周/季度尚未结束而每15秒重新下载；未完成记录不获此延长。
+
+主源失败但备用源新数据成功：history_refresh_status=succeeded、primary_refresh_status=failed、primary_refresh_error保留。备用缓存交付且本次主源失败：degraded=true、history_refresh_status=failed。缓存命中不等于上游成功。source_requests逐源记录尝试、交付、原采集时间、序列名及原始版本。source_transition只说明整段换源，不宣称复权口径一致。
+
+默认refresh=false会优先检查主源或备用源处于正常TTL且覆盖完整的成功缓存，不为读取已有备用缓存先触发主源失败。分页缓存可跨普通TTL读取同一指纹版本，但不跨14天成功保留期；普通首页缓存仍遵守正常TTL。

@@ -100,7 +100,7 @@ node scripts/check-public-source.mjs
 
 13 项全球指标。日韩报价优先 Yahoo，东方财富 / NAVER 提供同指数备用；日本已核实 2026–2027 日历及午休，韩国完整年度休市 / 特别时段尚未核实，明确返回不确定性。美股报价切换新浪后，按需历史可使用东方财富 / Nasdaq，FRED 备用。
 
-## 历史状态（Schema v1.5，服务 1.5.0）
+## 历史状态（Schema v1.5，服务 1.5.1）
 
 `quality` 保留为报价质量；历史必须单独读取 `history_quality`。`history_supported` 是支持路径的兼容能力别名，实际数据只看 `history_available` 和 `history_count`。空数组、失败或未请求不能被标为实际有历史。
 
@@ -125,3 +125,5 @@ node scripts/check-public-source.mjs
 证券历史独立读取：支持日K及1/5/15/30/60分钟；1分钟仅开放不复权且近期窗口有限。`history_count`为当前页条数，完整已取得条数看`pagination.total_count`，覆盖完整性看`coverage`。`next_cursor`翻页，默认200条、最多500条。具体字段、复权缓存、已核实日历与限制见[证券历史契约](docs/SECURITY_HISTORY.md)。
 
 - [证券历史K线实现与真实验收报告](docs/SECURITY_HISTORY_REPORT.md)
+
+1.5.1修复：证券历史优先东方财富、整段腾讯备用；备用缺少逐根成交额则amount=null、quality=partial。分页默认只读绑定提供方的成功缓存，不重新请求上游；复权序列未核实不冒充成功。主源错误保留真实HTTP状态及有限正文。详见证券历史契约。
