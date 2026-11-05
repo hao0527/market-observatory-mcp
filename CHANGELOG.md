@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.1 — 2026-11-05
+
+- 修复有效缓存与 history_quality=unavailable 矛盾：记录质量由日期 / 完成状态判断，独立返回 history_degraded / history_refresh_status / history_refresh_error。
+- 保留原 fetched_at，retrieved_at 为本次交付时间；普通 TTL 缓存命中不宣称上游刷新成功。兼容旧 D1 缓存，无数据库迁移。
+- 集中计算同一次响应的 quote_source / history_source / cross_provider / same_instrument，纠正旧备注；历史来源转换不覆盖报价 source_transition，也不宣称跨源报价口径完全相同。
+- 黄金 unsupported 改为正常 MCP 结果与 HTTP 200；非法 ID 继续报 INVALID_ARGUMENT。布伦特 CFD 不拼接期货历史。
+- 56 组历史契约场景，覆盖持久缓存重启、双源刷新失败、新鲜 / 过期 / forming / unknown、跨源和同源、报价 / 历史故障隔离及工具外层响应。
+- 四条 FRED 备用完整路径分别通过合成 CSV 测试；真实隔离测试仍为 HTTP 503，明确保留未通过真实数据成功验收的限制。请求头和旧 CSV 地址测试也未恢复连接。
+- 不新增指标、日历覆盖、Secrets 或架构层；Schema 仍为兼容的 1.4，服务修订为 1.4.1。
+
 ## 1.4.0 — 2026-11-05
 
 - 历史能力与取得结果分离：报价源历史能力、独立历史能力、实际记录数及可用性分别返回；旧 history_supported 固定为能力别名。

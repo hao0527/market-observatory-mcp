@@ -9,6 +9,10 @@ export const historyContract={
  history_supported:'Deprecated capability alias: quote_source_history_supported===true OR independent_history_supported; never indicates request success.',
  history_available:'This response obtained valid nonempty records (history_count>0), including explicitly marked cached records. The compact snapshot may omit the array.',
  history_quality:'Independent history state: available, stale, unavailable, unsupported, forming, unknown, not_requested. Never use quality/quote_quality as history quality.',
+ history_refresh_status:'succeeded: this response refreshed history upstream (including inline quote history); failed: a history refresh failed; not_attempted: no history refresh was performed. Cache delivery alone is not success.',
+ history_refresh_error:'Structured current refresh failure, independent of record quality; history_error remains a compatibility field and also describes unsupported/empty history.',
+ history_degraded:'History was delivered from a previous successful cache after refresh failure; inspect history_metadata.delivery and history_refresh_error. Does not imply stale or unavailable.',
+ cross_provider:'Compare quote_source and history_source within this response, never with a separate snapshot request. Null when either source is unknown.',
  quote_source_history_supported:'The current quote provider has an implemented same-instrument history adapter; this may use a separate endpoint and does not indicate records were retrieved.',
  quote_quality:'Quote quality. Legacy quality remains its alias; history state never changes it.',
  expected_date:'Legacy history freshness alias of expected_last_completed_date; latest_session_date is distinct.',
@@ -39,33 +43,43 @@ function emptyError(){return {code:'EMPTY_HISTORY',message:'历史源没有返�
 export function historyState(metric:any,requested=false){
  const capabilities=historyCapabilities(metric),points=capabilities.history_supported?records(metric):[],count=points.length;
  const old=metric.history_metadata??{};
- const ownSource=old.source??metric.source??null;
+ const ownSource=Object.hasOwn(old,'source')?old.source:metric.source??null;
  const last=points.at(-1)?.date??null;
  const context={market_timezone:marketTimezone(metric),market_date:last,fetched_at:old.fetched_at??metric.fetched_at,data_type:old.data_type??metric.data_type,bar_observed_at:old.bar_observed_at??(!old.source?metric.as_of:null),provider_session:old.provider_session??metric.provider_session,market_status:old.market_status??metric.market_status,quote_market_date:old.quote_market_date??metric.market_date,quote_previous_date:old.quote_previous_date??metric.previous_date};
  const calculated=historyFreshness(context,metric.kind);
  const fresh=capabilities.history_supported?calculated:{...calculated,bar_status:'unsupported',status:'unsupported',reason:'当前品种没有已实现的可比历史通道'};
- const degraded=old.degraded??(count>0&&metric.degraded===true);
- let error=metric.history_error??old.upstream_error??(count>0&&metric.degraded?metric.upstream_error:null)??null;
+ const quoteSource=metric.source??null;
+ const inline=!Object.hasOwn(old,'source')||old.source===quoteSource;
+ const degraded=capabilities.history_supported&&(old.degraded??(count>0&&inline&&metric.degraded===true))===true;
+ let error=metric.history_error??old.refresh_error??old.upstream_error??(count>0&&inline&&metric.degraded?metric.upstream_error:null)??null;
  let quality:string;
  if(!capabilities.history_supported)quality='unsupported';
  else if(!count)quality=requested||error?'unavailable':'not_requested';
  else if(fresh.stale)quality='stale';
- else if(degraded)quality='unavailable'; // A failed refresh may still deliver explicitly marked cached records.
  else if(fresh.bar_status==='forming')quality='forming';
  else if(fresh.status==='latest_completed_session')quality='available';
  else quality='unknown';
  if(quality==='unsupported')error={code:'UNSUPPORTED_HISTORY',message:metric.id==='gold'?'黄金当前来源不提供可比历史，不以期货替代':'当前报价品种不支持可比历史，禁止拼接不同品种',retryable:false};
  else if(quality==='unavailable'&&!error)error=emptyError();
- if(error&&!error.source_url&&old.source_url)error={...error,source:ownSource,source_url:old.source_url};
- const metadata={...old,source:count?ownSource:old.source??null,source_url:old.source_url??(count?metric.source_url:null)??null,instrument_id:old.instrument_id??metric.instrument_id??metric.id,source_timezone:old.source_timezone??(count?metric.source_timezone:null)??null,market_timezone:context.market_timezone,timestamp_timezone:'UTC',report_timezone:'Asia/Shanghai',market_date:last,as_of:null,time_precision:count>0?'date':'unknown',fetched_at:old.fetched_at??(count?metric.fetched_at:null)??null,retrieved_at:new Date().toISOString(),quality,stale:fresh.stale,freshness:fresh,bar_status:count?fresh.bar_status:quality==='unsupported'?'unsupported':'none',latest_session_date:fresh.latest_session_date,expected_last_completed_date:fresh.expected_last_completed_date,calendar_verified:fresh.calendar_verified,frequency:capabilities.history_supported?'daily':null,unit:metric.unit,degraded:degraded===true};
+ if(error&&!error.source_url&&old.source_url&&(!error.source||error.source===ownSource))error={...error,source:error.source??ownSource,source_url:old.source_url};
+ const delivery=old.delivery??(count&&inline?metric.delivery:null)??null;
+ const refreshError=capabilities.history_supported?(error??(degraded?{code:'HISTORY_REFRESH_FAILED',message:'旧缓存标记历史刷新失败，但未保留原始上游错误',retryable:true}:null)):null;
+ const refreshStatus=refreshError?'failed':capabilities.history_supported&&count>0&&delivery==='upstream'?'succeeded':'not_attempted';
+ const historySource=count?ownSource:old.source??null;
+ const crossProvider=quoteSource&&historySource?quoteSource!==historySource:null;
+ const instrument=old.instrument_id??metric.instrument_id??metric.id;
+ const sameInstrument=count>0?instrument===(metric.instrument_id??metric.id):null;
+ const transition={from:quoteSource,to:historySource,cross_provider:crossProvider,same_instrument:sameInstrument,same_quote_basis:null};
+ const note=count>0?(crossProvider===true?'历史与本次响应报价来自不同供应商；同一品种不代表报价时点或口径完全相同。':crossProvider===false?'历史与本次响应报价来自同一供应商。':'当前无法核实报价与历史是否同源。')+'整段历史保留自身来源、日期和质量，不拼接最新报价或改变其涨跌基准。':quality==='unsupported'?'当前品种没有可比历史实现，不使用其他品种替代。':'本次没有有效历史记录。';
+ const metadata={...old,source:historySource,quote_source:quoteSource,history_source:historySource,cross_provider:crossProvider,same_instrument:sameInstrument,source_transition:transition,note,source_url:old.source_url??(count?metric.source_url:null)??null,instrument_id:instrument,source_timezone:old.source_timezone??(count?metric.source_timezone:null)??null,market_timezone:context.market_timezone,timestamp_timezone:'UTC',report_timezone:'Asia/Shanghai',market_date:last,as_of:null,time_precision:count>0?'date':'unknown',fetched_at:old.fetched_at??(count?metric.fetched_at:null)??null,retrieved_at:new Date().toISOString(),quality,stale:fresh.stale,freshness:fresh,bar_status:count?fresh.bar_status:quality==='unsupported'?'unsupported':'none',latest_session_date:fresh.latest_session_date,expected_last_completed_date:fresh.expected_last_completed_date,calendar_verified:fresh.calendar_verified,frequency:capabilities.history_supported?'daily':null,unit:metric.unit,delivery,degraded,refresh_status:refreshStatus,refresh_error:refreshError};
  const quoteQuality=metric.quote_quality??metric.quality??null;
- return {...metric,...capabilities,quality:quoteQuality,quote_quality:quoteQuality,history:points,history_requested:requested,history_count:count,history_available:count>0,history_quality:quality,history_stale:fresh.stale,history_error:error,history_metadata:metadata,history_freshness:fresh,history_market_date:last,history_source:metadata.source,history_fetched_at:metadata.fetched_at,history_retrieved_at:metadata.retrieved_at,latest_session_date:fresh.latest_session_date,expected_last_completed_date:fresh.expected_last_completed_date,bar_status:metadata.bar_status};
+ return {...metric,...capabilities,quality:quoteQuality,quote_quality:quoteQuality,quote_source:quoteSource,history:points,history_requested:requested,history_count:count,history_available:count>0,history_quality:quality,history_stale:fresh.stale,history_error:error,history_degraded:degraded,history_refresh_status:refreshStatus,history_refresh_error:refreshError,cross_provider:crossProvider,same_instrument:sameInstrument,history_source_transition:transition,history_metadata:metadata,history_freshness:fresh,history_market_date:last,history_source:metadata.source,history_fetched_at:metadata.fetched_at,history_retrieved_at:metadata.retrieved_at,latest_session_date:fresh.latest_session_date,expected_last_completed_date:fresh.expected_last_completed_date,bar_status:metadata.bar_status};
 }
 export async function resolveHistory(metric:any,refresh:boolean){
  const capabilities=historyCapabilities(metric);
  if(!capabilities.history_supported)return historyState({...metric,history:[]},true);
  const inline=records(metric);
- if(inline.length)return historyState({...metric,history:inline,history_metadata:{source:metric.source,source_url:metric.source_url,instrument_id:metric.instrument_id,market_date:inline.at(-1)?.date,source_timezone:metric.source_timezone,fetched_at:metric.fetched_at,retrieved_at:metric.retrieved_at,degraded:metric.degraded,upstream_error:metric.degraded?metric.upstream_error:null,bar_observed_at:metric.as_of,same_instrument:true,cross_provider:false,note:'历史与报价同源；历史质量按日线日期和完成状态单独计算'}},true);
+ if(inline.length)return historyState({...metric,history:inline,history_metadata:{source:metric.source,source_url:metric.source_url,instrument_id:metric.instrument_id,market_date:inline.at(-1)?.date,source_timezone:metric.source_timezone,fetched_at:metric.fetched_at,retrieved_at:metric.retrieved_at,delivery:metric.delivery,cache_backend:metric.cache_backend,cache_warning:metric.cache_warning,degraded:metric.degraded,upstream_error:metric.degraded?metric.upstream_error:null,bar_observed_at:metric.as_of}},true);
  if(!capabilities.independent_history_supported)return historyState({...metric,history:[],history_error:metric.upstream_error??emptyError()},true);
  try{
   const h=await loadQuote('index-history:'+metric.id,async()=>{

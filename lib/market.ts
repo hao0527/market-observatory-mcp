@@ -97,7 +97,7 @@ export async function snapshot(input:boolean|SnapshotOptions=false){
 }
 export async function marketHistory(id:string,refresh=false){
  const item=catalog.find(m=>m.id===id);if(!item)throw new DataError({code:'INVALID_ARGUMENT',message:'未知指标',retryable:false});
- // Preserve the legacy gold tool error marker, while returning the complete status contract.
+  // Unsupported history is a normal business result for a valid metric ID.
  if(item.id==='gold'){
   const status=presentMetric({...item,value:null,quality:null,quote_quality:null,quote_requested:false,history:[],source:null},true);
   return {...status,schema_version:'1.4',error:status.history_error,history_basis:null,history_note:'黄金当前来源不提供可比历史，不以期货替代'};

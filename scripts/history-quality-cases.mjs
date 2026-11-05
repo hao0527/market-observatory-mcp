@@ -9,6 +9,12 @@ export async function testHistoryQuality({market,historyQuality:history,indexSou
   assert.equal(h.history_supported,h.quote_source_history_supported===true||h.independent_history_supported);
   assert.equal(h.quality,h.quote_quality);assert.equal(h.history_quality,h.history_metadata.quality);
   assert.equal(h.history_metadata.market_date,h.history_market_date);
+  if(h.history_quality==='unavailable')assert.equal(h.history_count,0);
+  if(h.history_quality==='stale')assert(h.history_count>0);
+  assert.equal(h.history_degraded,h.history_metadata.degraded);
+  assert.equal(h.history_refresh_status,h.history_metadata.refresh_status);
+  if(h.history_degraded){assert(h.history_refresh_error);assert.match(h.history_metadata.delivery,/cache/)}
+  if(h.cross_provider!==null)assert.equal(h.cross_provider,h.quote_source!==h.history_source);
  }
  const quote=(id,extra={})=>({...market.catalog.find(m=>m.id===id),source:'新浪财经',instrument_id:id,value:105,previous_close:100,previous_date:null,change:5,change_percent:5,quality:'available',as_of:'2026-11-04T21:00:00Z',market_date:'2026-11-04',source_timezone:'Asia/Shanghai',fetched_at:at,retrieved_at:at,history:[],history_supported:false,...extra});
  const observed=(id,dates,extra={})=>quote(id,{history:dates.map((date,i)=>({date,value:100+i})),history_metadata:{source:'FRED',source_url:'https://example.test/history',instrument_id:id,source_timezone:'America/New_York',fetched_at:at,retrieved_at:at,...extra}});
@@ -68,11 +74,33 @@ export async function testHistoryQuality({market,historyQuality:history,indexSou
   // Actual KS11 route, all-source HTTP 520 failure, and capability vs result consistency.
   cache.clearQuoteMemory();globalThis.fetch=async()=>new Response('',{status:520});
   const kospi=await market.marketHistory('kospi',true);valid(kospi);assert.equal(kospi.history_count,0);assert.equal(kospi.history_quality,'unavailable');assert.equal(kospi.independent_history_supported,true);assert.equal(kospi.history_error.http_status,520);assert(kospi.history_error.causes.some(c=>c.source_url.includes('100.KS11')));
-  // An unavailable source can deliver prior records only with explicit error/degraded flags.
-  cache.clearQuoteMemory();globalThis.fetch=async()=>Response.json({data:{code:'SPX',market:100,name:'标普500',klines:['2026-11-04,100,101']}});
-  const lastGood=await history.resolveHistory(quote('sp500'),true);valid(lastGood);
-  globalThis.fetch=async()=>new Response('',{status:503});
-  const degraded=await history.resolveHistory(quote('sp500'),true);valid(degraded);assert.equal(degraded.history_available,true);assert.equal(degraded.history_quality,'unavailable');assert.equal(degraded.history_metadata.degraded,true);assert.equal(degraded.history_fetched_at,lastGood.history_fetched_at);assert.equal(degraded.quote_quality,'available');assert.equal(degraded.history_error.http_status,503);
+  // Restart the worker and fail both upstreams: delivery failure never overwrites record quality.
+  for(const id of ['sp500','dow']){
+   Date.now=()=>Date.parse(at);cache.clearQuoteMemory();const saved=new Map();
+   const backend={read:async key=>saved.get(key)??null,write:async record=>saved.set(record.key,record)};
+   globalThis.fetch=async()=>Response.json({data:{code:id==='sp500'?'SPX':'DJIA',market:100,name:id==='sp500'?'标普500':'道琼斯',klines:['2026-11-04,100,101']}});
+   const lastGood=await cache.runWithQuoteCache(backend,()=>history.resolveHistory(quote(id),true));valid(lastGood);assert.equal(lastGood.history_refresh_status,'succeeded');
+   globalThis.fetch=async()=>{throw Error('TTL cache must not request upstream')};
+   const cached=await cache.runWithQuoteCache(backend,()=>history.resolveHistory(quote(id),false));valid(cached);assert.equal(cached.history_refresh_status,'not_attempted');assert.equal(cached.history_refresh_error,null);assert.equal(cached.history_degraded,false);
+   cache.clearQuoteMemory();globalThis.fetch=async()=>new Response('',{status:503});
+   const degraded=await cache.runWithQuoteCache(backend,()=>history.resolveHistory(quote(id),true));valid(degraded);assert.equal(degraded.history_available,true);assert.equal(degraded.history_quality,'available');assert.equal(degraded.history_degraded,true);assert.equal(degraded.history_metadata.delivery,'durable_cache');assert.equal(degraded.history_refresh_status,'failed');assert.equal(degraded.history_refresh_error.http_status,503);assert.equal(degraded.history_refresh_error.causes.length,2);assert.equal(degraded.history_fetched_at,lastGood.history_fetched_at);assert.equal(degraded.quote_quality,'available');assert.equal(degraded.history_error.http_status,503);
+   assert.equal(market.presentMetric(degraded,true).history_refresh_status,'failed');
+   Date.now=()=>Date.parse('2026-11-06T05:24:00Z');cache.clearQuoteMemory();
+   const expired=await cache.runWithQuoteCache(backend,()=>history.resolveHistory(quote(id),true));valid(expired);assert.equal(expired.history_quality,'stale');assert.equal(expired.history_refresh_status,'failed');assert.equal(expired.history_fetched_at,lastGood.history_fetched_at);
+  }
+  Date.now=()=>Date.parse(at);
+  const refreshError={code:'UPSTREAM_HTTP',http_status:520,retryable:true,source:'东方财富'};
+  const formingCache=history.historyState({...tokyo,history_metadata:{...tokyo.history_metadata,delivery:'durable_cache',degraded:true,upstream_error:refreshError}},true);valid(formingCache);assert.equal(formingCache.history_quality,'forming');assert.equal(formingCache.history_refresh_status,'failed');
+  const unknownCache=history.historyState(observed('kospi',['2026-11-04'],{source_timezone:'Asia/Seoul',delivery:'durable_cache',degraded:true,upstream_error:refreshError}),true);valid(unknownCache);assert.equal(unknownCache.history_quality,'unknown');
+  const independentGood=history.historyState({...observed('sp500',['2026-11-04'],{delivery:'upstream',degraded:false}),degraded:true,quality:'degraded',upstream_error:refreshError},true);valid(independentGood);assert.equal(independentGood.history_quality,'available');assert.equal(independentGood.history_refresh_status,'succeeded');assert.equal(independentGood.history_refresh_error,null);assert.equal(independentGood.quote_quality,'degraded');
+  for(const id of ['vix','vxn','sp500','nasdaq','dow','sox']){
+   const mixed=history.historyState({...observed(id,['2026-11-04'],{source:'Yahoo Finance',cross_provider:false,note:'历史与报价同源',delivery:'upstream'}),source:id==='vix'||id==='vxn'?'Cboe':'新浪财经',source_transition:{from:'Yahoo Finance',to:'quote fallback'}},true);valid(mixed);assert.equal(mixed.cross_provider,true);assert.equal(mixed.same_instrument,true);assert.equal(mixed.history_metadata.cross_provider,true);assert.match(mixed.history_metadata.note,/不同供应商/);assert.equal(mixed.history_source_transition.from,mixed.quote_source);assert.equal(mixed.history_source_transition.to,'Yahoo Finance');assert.equal(mixed.source_transition.to,'quote fallback');assert.equal(mixed.history_source_transition.same_quote_basis,null);
+  }
+  const sameSource=await history.resolveHistory(quote('vix',{source:'Cboe',history:[{date:'2026-11-04',value:20}],delivery:'upstream'}),true);valid(sameSource);assert.equal(sameSource.cross_provider,false);assert.equal(sameSource.same_instrument,true);assert.equal(sameSource.history_refresh_status,'succeeded');
+  for(const id of ['vix','vxn']){const inlineCache=await history.resolveHistory(quote(id,{source:'Cboe',history:[{date:'2026-11-04',value:20}],delivery:'durable_cache',degraded:true,quality:'degraded',upstream_error:refreshError}),true);valid(inlineCache);assert.equal(inlineCache.history_quality,'available');assert.equal(inlineCache.quote_quality,'degraded');assert.equal(inlineCache.history_refresh_status,'failed');assert.equal(inlineCache.cross_provider,false)}
+  const sourceUnknown=history.historyState(observed('sp500',['2026-11-04'],{source:null}),true);valid(sourceUnknown);assert.equal(sourceUnknown.history_source,null);assert.equal(sourceUnknown.cross_provider,null);
+  const failedOtherProvider=history.historyState({...observed('sp500',['2026-11-04'],{source:'东方财富',delivery:'durable_cache',degraded:true}),history_error:{code:'UPSTREAM_NETWORK',message:'FRED request failed without a known URL',source:'FRED',retryable:true}},true);valid(failedOtherProvider);assert.equal(failedOtherProvider.history_source,'东方财富');assert.equal(failedOtherProvider.history_refresh_error.source,'FRED');assert.equal(failedOtherProvider.history_refresh_error.source_url,undefined);
+  assert.equal(unsupported.history_refresh_status,'not_attempted');assert.equal(unsupported.history_refresh_error,null);assert.equal(failed.history_refresh_status,'failed');
 
   Date.now=()=>Date.parse('2026-11-05T21:00:00Z');const treasuryPublished=history.historyState({...observed('us2y',['2026-11-05'],{fetched_at:'2026-11-05T21:00:00Z',data_type:'official_daily_par_yield'}),source:'U.S. Treasury',data_type:'official_daily_par_yield'},true);valid(treasuryPublished);assert.equal(treasuryPublished.history_quality,'available');
   const commodity=history.historyState(quote('brent',{source:'Yahoo Finance',quote_kind:'continuous_front_month_futures',instrument_id:'brent_front_month_continuous',market_timezone:'America/New_York',history:[{date:'2026-11-04',value:90}]}),true);valid(commodity);assert.equal(commodity.history_quality,'unknown');assert.equal(commodity.history_available,true);

@@ -224,9 +224,11 @@ try {
   const invalid = await (await mcp.POST(request('tools/call',{name:'get_security_quotes',arguments:{symbols:['159842']}}))).json();
   assert.equal(invalid.result.isError,true);
   const history = await (await mcp.POST(request('tools/call',{name:'get_market_history',arguments:{id:'gold'}}))).json();
-  assert.equal(history.result.isError,true);
+  assert.equal(history.result.isError,false);
   const goldStatus=JSON.parse(history.result.content[0].text);assert.equal(goldStatus.history_quality,'unsupported');assert.equal(goldStatus.history_count,0);assert.equal(goldStatus.history_available,false);
-  const goldHttp=await historyApi.GET(new Request('https://test.local/api/history?id=gold'));assert.equal(goldHttp.status,400);const goldBody=await goldHttp.json();assert.equal(goldBody.history_quality,'unsupported');assert.equal(typeof goldBody.error,'string');
+  const goldHttp=await historyApi.GET(new Request('https://test.local/api/history?id=gold'));assert.equal(goldHttp.status,200);const goldBody=await goldHttp.json();assert.equal(goldBody.history_quality,'unsupported');assert.equal(goldBody.history_error.code,'UNSUPPORTED_HISTORY');assert.equal(goldBody.history_refresh_status,'not_attempted');
+  const badHistory=await (await mcp.POST(request('tools/call',{name:'get_market_history',arguments:{id:'not_an_index'}}))).json();assert.equal(badHistory.result.isError,true);assert.equal(JSON.parse(badHistory.result.content[0].text).error.code,'INVALID_ARGUMENT');
+  const badHistoryHttp=await historyApi.GET(new Request('https://test.local/api/history?id=not_an_index'));assert.equal(badHistoryHttp.status,400);
   const discover = await (await mcp.POST(request('server/discover'))).json();
   assert.deepEqual(discover.result.supportedVersions,['2026-07-28']);
   console.log('PASS: quote arithmetic, field units, GBK record parsing, missing/zero prices, timestamps, stale quotes, symbol validation, partial failures, cache/refresh, gold baseline/fallback, MCP contracts');
@@ -234,7 +236,7 @@ try {
   console.log('PASS: durable fallback with original timestamps, retry bounds, US sessions/holidays/DST/early close, Treasury publishing window, compact snapshots, isolated history, partial source failure');
   if(process.env.LIVE_FALLBACKS==='1'){
     globalThis.fetch=async(url,options)=>url.includes('push2his.eastmoney.com')||url.includes('api.nasdaq.com')?new Response('',{status:503}):realFetch(url,options);Date.now=realNow;cache.clearQuoteMemory();
-    const results=await Promise.all(['sp500','nasdaq','dow','sox','nikkei225','kospi'].map(async id=>{try{const h=await indexSources.independentIndexHistory(id);const state=historyQuality.historyState({...market.catalog.find(m=>m.id===id),quality:null,history:h.history,history_metadata:{source:h.history_source,source_url:h.history_source_url,fetched_at:h.fetched_at,source_timezone:h.source_timezone,market_status:h.market_status,quote_market_date:h.quote_market_date}},true);return {id,result:'records',source:h.history_source,series:h.history_series,count:h.history.length,date:h.market_date,quality:state.history_quality,attempts:h.history_source_attempts}}catch(error){return {id,result:'unavailable',error:upstream.dataIssue(error)}}}));
+    const results=await Promise.all(['sp500','nasdaq','dow','sox','nikkei225','kospi'].map(async id=>{const h=await historyQuality.resolveHistory({...market.catalog.find(m=>m.id===id),instrument_id:id,quality:null,source:null,quote_requested:false,history:[]},true);assert.equal(h.history_available,h.history_count>0);if(h.history_available){assert.equal(h.history_refresh_status,'succeeded');assert.equal(h.history_source,id in indexSources.fredSeries?'FRED':'NAVER Finance')}return {id,result:h.history_available?'records':'unavailable',source:h.history_source,series:h.history_metadata.series,count:h.history_count,first_date:h.history[0]?.date,date:h.history_market_date,quality:h.history_quality,refresh_status:h.history_refresh_status,fetched_at:h.history_fetched_at,retrieved_at:h.history_retrieved_at,attempts:h.history_metadata.source_attempts,error:h.history_refresh_error}}));
     console.log(JSON.stringify({live_fallbacks:results}));
   }
   if (process.env.LIVE_DATA === '1') {

@@ -13,7 +13,7 @@ export const mcpTools = [
   },
   {
     name: 'get_market_history',
-    description: '获取某指标最近约一个月的可得日线收盘；美债为官方日终收益率。黄金现货当前来源无历史，明确返回不支持；美股报价切换新浪时按需读取独立东方财富/Nasdaq日线，FRED备用，日韩可用东方财富/NAVER独立历史；逐项标注history_metadata的来源、日期、质量，不与报价拼接；能力字段history_supported仅表示支持路径；实际记录看history_available/history_count，历史质量独立看history_quality，不能用quote_quality/quality替代。',
+    description: '获取某指标最近约一个月的可得日线收盘；美债为官方日终收益率。黄金现货当前来源无历史，明确返回不支持；美股报价切换新浪时按需读取独立东方财富/Nasdaq日线，FRED备用，日韩可用东方财富/NAVER独立历史；逐项标注history_metadata的来源、日期、质量，不与报价拼接；能力字段history_supported仅表示支持路径；实际记录看history_available/history_count，历史质量独立看history_quality；刷新结果看history_refresh_status/history_refresh_error，缓存失败不改变记录质量；来源比较以同一响应的quote_source/history_source为准，不能用quote_quality/quality替代。',
     inputSchema: {type:'object',properties:{id:{type:'string',enum:catalog.map(m=>m.id)},refresh:{type:'boolean',description:'只刷新指定指标'}},required:['id'],additionalProperties:false},
     annotations: {readOnlyHint:true},
   },
@@ -54,13 +54,13 @@ export async function POST(req: Request) {
   if (id === undefined) return new Response(null, {status:202});
   let result: any;
   if (method === 'server/discover') result = {supportedVersions:['2026-07-28'], capabilities:{tools:{}}};
-  else if (method === 'initialize') result = {protocolVersion:params?.protocolVersion || '2026-07-28', serverInfo:{name:'asset-observatory', version:'1.4.0'}, capabilities:{tools:{}}};
+  else if (method === 'initialize') result = {protocolVersion:params?.protocolVersion || '2026-07-28', serverInfo:{name:'asset-observatory', version:'1.4.1'}, capabilities:{tools:{}}};
   else if (method === 'ping') result = {};
   else if (method === 'tools/list') result = {tools:mcpTools};
   else if (method === 'tools/call') {
     try {
       const data = await callMarketTool(params?.name, params?.arguments ?? {});
-      result = {content:[{type:'text', text:JSON.stringify(data)}], isError:params?.name==='get_market_history'&&data.id==='gold'&&data.history_quality==='unsupported'};
+      result = {content:[{type:'text', text:JSON.stringify(data)}], isError:false};
     } catch (error) {
       result = {content:[{type:'text', text:JSON.stringify({error:dataIssue(error)})}], isError:true};
     }
