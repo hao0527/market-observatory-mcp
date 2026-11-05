@@ -1,0 +1,18 @@
+'use client';
+import {useState} from 'react';
+const number = (n:any, digits=3) => typeof n === 'number' ? n.toLocaleString('en-US',{minimumFractionDigits:digits,maximumFractionDigits:digits}) : '—';
+export default function SecurityQuotes(){
+  const [symbols,setSymbols]=useState('sz159842, sh518850');
+  const [data,setData]=useState<any>(null), [busy,setBusy]=useState(false), [error,setError]=useState('');
+  async function query(event:React.FormEvent){
+    event.preventDefault();setBusy(true);setError('');setData(null);
+    try{
+      const codes=symbols.trim().split(/[\s,，]+/).join(',');
+      const response=await fetch('/api/quotes?refresh=1&symbols='+encodeURIComponent(codes));
+      const result:any=await response.json();
+      if(!response.ok)throw Error(result.error||'获取失败');
+      setData(result);
+    }catch(e){setError(String(e))}finally{setBusy(false)}
+  }
+  return <section className="security-section" id="securities"><div className="section-heading"><h2>指定股票与 ETF <span>SECURITY QUOTES</span></h2><small>腾讯行情 · 按需查询</small></div><form className="security-form" onSubmit={query}><label htmlFor="security-symbols">证券代码</label><input id="security-symbols" value={symbols} onChange={e=>setSymbols(e.target.value)} placeholder="sz159842, sh518850" autoCapitalize="none" spellCheck={false} required/><button type="submit" className="refresh" disabled={busy}>{busy?'正在读取…':'查询最新行情 ↗'}</button></form><p className="security-note">使用 sh / sz / bj 前缀，可用逗号分隔，最多 30 只。休市或停牌可能返回最后报价；ETF 市价不等于基金净值。</p>{error&&<div role="alert" className="warning">{error}</div>}{data&&<><p className="security-note">读取于 {new Date(data.fetched_at).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})} · 北京时间 · 可用 {data.coverage.available} / {data.coverage.total}</p><div className="security-results">{data.quotes.map((q:any)=><article className="security-result" key={q.symbol}><div className="section-heading"><h3>{q.name||q.symbol}<small>{q.symbol}</small></h3><span className={'tag '+(q.quality==='available'?'':'warn')}>{q.quality==='available'?'最新可得':q.quality==='unavailable'?'不可用':q.degraded?'上游失败 · 旧数据':q.quality==='stale'?'需核对时效':'字段不全'}</span></div><div className="security-price">{number(q.value)}<small> CNY</small><span className={q.change>0?'positive':q.change<0?'negative':'muted'}>{q.change_percent==null?'—':(q.change_percent>0?'+':'')+number(q.change_percent,2)+'%'}</span></div>{q.error?<p role="alert" className="security-note">{q.error}</p>:<><div className="quote-pairs"><span>昨收 <b>{number(q.previous_close)}</b></span><span>今开 <b>{number(q.open)}</b></span><span>最高 <b>{number(q.high)}</b></span><span>最低 <b>{number(q.low)}</b></span><span>成交量 <b>{number(q.volume_lots,0)} 手</b></span><span>成交额 <b>{number(q.turnover_wan_cny,2)} 万元</b></span></div><p className="security-note">行情时间：{q.as_of_local||'未提供'}（北京）<br/>{q.market_status?.raw||'市场状态未提供'} · {q.delay}</p>{q.degraded&&<p className="security-note quote-warning">上游失败，显示最近成功数据。成功读取于 {q.fetched_at}；原因：{q.upstream_error?.message}</p>}{q.warnings?.map((w:string)=><p key={w} className="security-note quote-warning">{w}</p>)}<details><summary>五档盘口与来源</summary><div className="quote-book"><div><b>买盘 · 价格 / 手</b>{q.order_book.bids.map((p:any)=><p key={p.level}>买{p.level}<span>{number(p.price)} / {number(p.volume_lots,0)}</span></p>)}</div><div><b>卖盘 · 价格 / 手</b>{q.order_book.asks.map((p:any)=><p key={p.level}>卖{p.level}<span>{number(p.price)} / {number(p.volume_lots,0)}</span></p>)}</div></div><a href={q.source_url} target="_blank" rel="noreferrer" className="source-link">打开腾讯原始行情 ↗</a></details></>}</article>)}</div></>}</section>
+}
