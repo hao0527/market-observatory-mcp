@@ -8,7 +8,7 @@ import ts from 'typescript';
 const dir=await mkdtemp(join(tmpdir(),'security-history-live-'));
 const results=[];
 try{
- for(const name of ['upstream','quote-cache','security-calendar','security-history']){
+ for(const name of ['upstream','quote-cache','security-calendar','security-store','security-history']){
   let code=ts.transpileModule(await readFile('lib/'+name+'.ts','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
   code=code.replace(/from '(\.\/[^']+)'/g,"from '$1.mjs'");await writeFile(join(dir,name+'.mjs'),code);
  }
@@ -27,6 +27,9 @@ try{
   return r;
  }
  for(const period of ['1d','5m','15m','1m','30m','60m'])await check(period,{period});
+ const first=results.find(x=>x.label==='5m').result;let last=first,all=[...first.bars],page=1;
+ while(last.history_available&&last.pagination.next_cursor&&page<5){const next=await check('cursor_page'+(++page),{period:'5m',limit:500,cursor:last.pagination.next_cursor,refresh:false});assert(next.history_available,'Immediate pagination must retain its successful snapshot');assert(last.bars.at(-1).timestamp<next.bars[0].timestamp);all.push(...next.bars);last=next;}
+ if(last.history_available&&!last.pagination.has_more){assert.equal(all.length,last.pagination.total_count);assert.equal(new Set(all.map(b=>b.timestamp)).size,all.length);}
  // Identical query, no forced refresh: verifies normal-cache behavior separately from source availability.
  await check('cache_read',{period:'60m',refresh:false,limit:5});
  for(const period of ['1d','5m','15m','30m','60m'])for(const adjust of ['qfq','hfq'])await check(period+'_'+adjust,{period,adjust,limit:5});
@@ -34,9 +37,6 @@ try{
  await check('one_minute_past_range',{period:'1m',end_date:shiftDate(end,-5),limit:5});
  await check('one_minute_qfq_unsupported',{period:'1m',adjust:'qfq'});
  for(const adjust of ['none','qfq','hfq'])await check('stock_adjust_'+adjust,{symbol:'sh600519',period:'1d',start_date:end.slice(0,4)+'-06-01',adjust,limit:500});
- const first=results.find(x=>x.label==='5m').result;let last=first,all=[...first.bars],page=1;
- while(last.history_available&&last.pagination.next_cursor&&page<5){const next=await check('cursor_page'+(++page),{period:'5m',limit:500,cursor:last.pagination.next_cursor,refresh:false});if(next.history_available){assert(last.bars.at(-1).timestamp<next.bars[0].timestamp);all.push(...next.bars)}last=next;}
- if(last.history_available&&!last.pagination.has_more){assert.equal(all.length,last.pagination.total_count);assert.equal(new Set(all.map(b=>b.timestamp)).size,all.length);}
  await check('one_minute_single_day',{period:'1m',start_date:end,end_date:end,limit:500,include_raw:true});
  await check('two_trading_days',{period:'5m',start_date:start.slice(0,8)+'08',end_date:start.slice(0,8)+'09',limit:500});
  const summary={executed_at:new Date().toISOString(),source:'real upstream; no simulated records',requested:{start,end},results};

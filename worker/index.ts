@@ -1,5 +1,7 @@
 import {createQuoteCache} from '../db/cache';
 import {runWithQuoteCache} from '../lib/quote-cache';
+import {createSecurityArchive} from '../db/security-archive';
+import {runWithSecurityArchive} from '../lib/security-store';
 import handler from "vinext/server/fetch-handler";
 import { runWithConnectorBinding } from "../lib/connector-context";
 import type { ConnectorBinding } from "../lib/connector-contract.mjs";
@@ -25,7 +27,7 @@ const worker = {
         },
       };
     }
-    return runWithQuoteCache(createQuoteCache(env.DB), () => runWithConnectorBinding(binding, () => handler.fetch(request, env, ctx)));
+    return runWithSecurityArchive(createSecurityArchive(env.DB), () => runWithQuoteCache(createQuoteCache(env.DB), () => runWithConnectorBinding(binding, () => handler.fetch(request, env, ctx))));
   },
 };
 

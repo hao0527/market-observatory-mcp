@@ -15,7 +15,9 @@ try {
     ['lib/upstream.ts','upstream.mjs',{}],
     ['lib/quote-cache.ts','quote-cache.mjs',{'./upstream':'./upstream.mjs'}],
     ['lib/security-calendar.ts','security-calendar.mjs',{}],
-    ['lib/security-history.ts','security-history.mjs',{'./security-calendar':'./security-calendar.mjs','./upstream':'./upstream.mjs','./quote-cache':'./quote-cache.mjs'}],
+    ['lib/security-store.ts','security-store.mjs',{}],
+    ['lib/security-archive.ts','security-archive.mjs',{'../config/security-watchlist.json':'./security-watchlist.mjs','./security-history':'./security-history.mjs','./security-store':'./security-store.mjs','./security-calendar':'./security-calendar.mjs','./upstream':'./upstream.mjs'}],
+    ['lib/security-history.ts','security-history.mjs',{'./security-calendar':'./security-calendar.mjs','./upstream':'./upstream.mjs','./quote-cache':'./quote-cache.mjs','./security-store':'./security-store.mjs'}],
     ['lib/freshness.ts','freshness.mjs',{}],
     ['lib/time-metadata.ts','time-metadata.mjs',{}],
     ['lib/index-sources.ts','index-sources.mjs',{'./upstream':'./upstream.mjs'}],
@@ -25,12 +27,13 @@ try {
     ['lib/history.ts','history.mjs',{'./index-sources':'./index-sources.mjs','./backup-sources':'./backup-sources.mjs','./freshness':'./freshness.mjs','./time-metadata':'./time-metadata.mjs','./quote-cache':'./quote-cache.mjs','./upstream':'./upstream.mjs'}],
     ['lib/market.ts', 'market.mjs', {'./history':'./history.mjs','./index-sources':'./index-sources.mjs','./time-metadata':'./time-metadata.mjs','./backup-sources':'./backup-sources.mjs','./gold':'./gold.mjs','./upstream':'./upstream.mjs','./quote-cache':'./quote-cache.mjs','./freshness':'./freshness.mjs'}],
     ['app/api/history/route.ts','api-history.mjs',{'@/lib/market':'./market.mjs','@/lib/upstream':'./upstream.mjs'}],
-    ['app/mcp/route.ts', 'mcp.mjs', {'@/lib/security-history':'./security-history.mjs','@/lib/market':'./market.mjs','@/lib/tencent':'./tencent.mjs','@/lib/freshness':'./freshness.mjs','@/lib/history':'./history.mjs','@/lib/upstream':'./upstream.mjs'}],
+    ['app/mcp/route.ts', 'mcp.mjs', {'@/lib/security-archive':'./security-archive.mjs','@/lib/security-history':'./security-history.mjs','@/lib/market':'./market.mjs','@/lib/tencent':'./tencent.mjs','@/lib/freshness':'./freshness.mjs','@/lib/history':'./history.mjs','@/lib/upstream':'./upstream.mjs'}],
   ]) {
     let code = ts.transpileModule(await readFile(input, 'utf8'), {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
     for (const [from,to] of Object.entries(imports)) code = code.replaceAll(`'${from}'`, `'${to}'`).replaceAll(`"${from}"`, `"${to}"`);
     await writeFile(join(dir,output), code);
   }
+  await writeFile(join(dir,'security-watchlist.mjs'),'export default '+await readFile('config/security-watchlist.json','utf8'));
   const tencent = await import(pathToFileURL(join(dir,'tencent.mjs')));
   const gold = await import(pathToFileURL(join(dir,'gold.mjs')));
   const cache = await import(pathToFileURL(join(dir,'quote-cache.mjs')));

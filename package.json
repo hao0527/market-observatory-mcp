@@ -1,6 +1,6 @@
 {
   "name": "market-observatory-mcp",
-  "version": "1.5.3",
+  "version": "1.6.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -13,7 +13,7 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "test": "node scripts/test-market-data.mjs",
-    "test:cache": "python3 scripts/test-cache-sql.py",
+    "test:cache": "python3 scripts/test-cache-sql.py && node scripts/test-security-archive.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
