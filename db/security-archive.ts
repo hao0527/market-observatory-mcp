@@ -50,6 +50,6 @@ export function createSecurityArchive(db?:D1Database):SecurityArchiveStore|null 
   async claim(id,now,until){const r=await db.prepare('UPDATE security_archive_jobs SET lease_until=? WHERE id=? AND lease_until<?').bind(until,id,now).run();return r.meta.changes===1},
   async finish(job){await db.prepare('UPDATE security_archive_jobs SET status=?,updated_at=?,lease_until=?,payload=? WHERE id=?').bind(job.status,job.updated_at,'',JSON.stringify(job),job.id).run()},
   async audit(id){return parse(await db.prepare('SELECT payload FROM security_history_fetches WHERE id=?').bind(id).first<{payload:string}>())},
-  async stats(){return {bars:await all('SELECT symbol,period,source,count(*) AS count,min(session_date) AS start_date,max(session_date) AS end_date FROM security_history_bars GROUP BY symbol,period,source'),fetches:await db.prepare('SELECT count(*) AS count FROM security_history_fetches').first()}},
+  async stats(){return {bars:await all('SELECT symbol,period,source,count(*) AS count,min(session_date) AS start_date,max(session_date) AS end_date FROM security_history_bars GROUP BY symbol,period,source'),fetches:await db.prepare('SELECT count(*) AS count FROM security_history_fetches').first(),latest_raw_fetch:await db.prepare('SELECT id,source,fetched_at FROM security_history_fetches WHERE security_name IS NOT NULL ORDER BY fetched_at DESC LIMIT 1').first()}},
  };
 }
