@@ -127,3 +127,5 @@ node scripts/check-public-source.mjs
 - [证券历史K线实现与真实验收报告](docs/SECURITY_HISTORY_REPORT.md)
 
 1.5.1修复：证券历史优先东方财富、整段腾讯备用；备用缺少逐根成交额则amount=null、quality=partial。分页默认只读绑定提供方的成功缓存，不重新请求上游；复权序列未核实不冒充成功。主源错误保留真实HTTP状态及有限正文。详见证券历史契约。
+
+- [证券历史第二轮修复及ChatGPT线上MCP验收（1.5.1）](docs/SECURITY_HISTORY_REPAIR_REPORT.md)：含逐证券/周期结果、复权失败、上游新取与缓存的区分。
