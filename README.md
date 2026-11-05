@@ -119,3 +119,4 @@ node scripts/check-public-source.mjs
 软件许可不替代数据供应商的条款或行情授权。仓库不包含个人账号凭据、作者站点身份、运行数据库或采集结果。
 
 - [第二轮质量修复与线上验收报告](docs/QUALITY_REPAIR_REPORT.md)
+- [第三轮历史质量、来源与备用源验收报告](docs/ROUND3_QUALITY_REPORT.md)
