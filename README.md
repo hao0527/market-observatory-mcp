@@ -54,6 +54,7 @@
 | `get_market_catalog` | `{}` | 指标、来源、日历覆盖和缓存策略 |
 | `get_market_snapshot` | `{"refresh":true}` | 默认只返回最新快照，不附带历史点 |
 | `get_security_quotes` | `{"symbols":["sz159842","sh518850"],"refresh":true}` | 最多批量 30 个带交易所前缀的代码 |
+| `get_security_history` | `{"symbol":"sh563360","period":"5m","start_date":"2026-10-01","end_date":"2026-11-05","adjust":"none","limit":200}` | 股票/ETF历史K线，独立来源、覆盖与分页 |
 | `get_market_history` | `{"id":"vix","refresh":true}` | 只获取指定指标的历史 |
 
 快照可选 `include_history` / `include_raw`；证券查询可选 `include_raw`。`refresh=true` 跳过正常缓存，但上游失败时仍可能返回明确标为 `degraded` 的最近成功数据。
@@ -99,7 +100,7 @@ node scripts/check-public-source.mjs
 
 13 项全球指标。日韩报价优先 Yahoo，东方财富 / NAVER 提供同指数备用；日本已核实 2026–2027 日历及午休，韩国完整年度休市 / 特别时段尚未核实，明确返回不确定性。美股报价切换新浪后，按需历史可使用东方财富 / Nasdaq，FRED 备用。
 
-## 历史状态（Schema v1.4，服务 1.4.1）
+## 历史状态（Schema v1.5，服务 1.5.0）
 
 `quality` 保留为报价质量；历史必须单独读取 `history_quality`。`history_supported` 是支持路径的兼容能力别名，实际数据只看 `history_available` 和 `history_count`。空数组、失败或未请求不能被标为实际有历史。
 
@@ -120,3 +121,5 @@ node scripts/check-public-source.mjs
 
 - [第二轮质量修复与线上验收报告](docs/QUALITY_REPAIR_REPORT.md)
 - [第三轮历史质量、来源与备用源验收报告](docs/ROUND3_QUALITY_REPORT.md)
+
+证券历史独立读取：支持日K及1/5/15/30/60分钟；1分钟仅开放不复权且近期窗口有限。`history_count`为当前页条数，完整已取得条数看`pagination.total_count`，覆盖完整性看`coverage`。`next_cursor`翻页，默认200条、最多500条。具体字段、复权缓存、已核实日历与限制见[证券历史契约](docs/SECURITY_HISTORY.md)。

@@ -112,7 +112,7 @@ npm run typecheck
 | 检查 | 应看到的结果 |
 | --- | --- |
 | 站点身份 | 平台新建、归属当前账号、默认私有 |
-| MCP 目录 | 四个工具及来源 / 日历 / 缓存说明 |
+| MCP 目录 | 五个工具及来源 / 日历 / 缓存说明 |
 | 默认快照 | 无历史点；来源、日期、时间和 quality 完整 |
 | 指定证券 | 有效代码可读；无效代码单独失败 |
 | 最近成功缓存 | `cache_backend=durable`，正常写入无 `cache_warning` |
@@ -154,3 +154,5 @@ pnpm dev
 - **D1 不可用**：检查 manifest、绑定和迁移；内存缓存正常不代表跨实例持久化已成功。
 - **未来年份时效 unknown**：更新 `lib/freshness.ts` 中已核实日历及来源，不能静默推测。
 - **账号没有 Sites / Work**：该复现路径依赖产品能力开放；仅有本地源码不能替代平台权限。
+
+证券历史验收（v1.5）：独立调用get_security_history查询sh563360，检查日K、5/15分钟、1分钟实际窗口、none/qfq/hfq、limit/cursor、当前页计数与总数、source_requests、coverage及未完成K线。1分钟复权为unsupported。完整脚本为`node scripts/test-security-history-live.mjs`，不以部分数据冒充完整历史。

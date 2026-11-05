@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.0 — 2026-11-05
+
+- 新增独立get_security_history：沪深北股票/场内ETF，日K及1/5/15/30/60分钟，日期范围与分页；不变更旧工具业务计算。
+- 东方财富周期、代码、OHLC、量额单位与复权参数经真实样本验证；1分钟仅none，窗口不足标partial或unsupported。
+- 复用既有D1，日K按季度、分钟按周缓存，最多16个证券历史内存块；保留原始响应及时间，刷新变少拒绝覆盖，复权批次按读取日隔离。
+- 2026沪深北各自官方排定日历，缺记录原因未知时不归为停牌；保留is_final=false/null，不自动把未完成缓存变成最终日线。
+- Schema升级1.5、服务1.5.0；新增68组证券历史场景，保留原56组历史契约及既有行情/缓存回归。
+- 真实30项源检查包含全部周期、复权、沪深北映射、分页1008根、1分钟窗口和日K跨源对账。详见SECURITY_HISTORY.md及验收报告。
+
 ## 1.4.1 — 2026-11-05
 
 - 修复有效缓存与 history_quality=unavailable 矛盾：记录质量由日期 / 完成状态判断，独立返回 history_degraded / history_refresh_status / history_refresh_error。

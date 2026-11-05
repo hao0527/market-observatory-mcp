@@ -3,8 +3,14 @@ import {getSecurityQuotes, securityQueryInfo} from '@/lib/tencent';
 import {calendarPolicy} from '@/lib/freshness';
 import {historyContract} from '@/lib/history';
 import {dataIssue} from '@/lib/upstream';
+import {getSecurityHistory,securityHistoryInfo} from '@/lib/security-history';
 
 export const mcpTools = [
+  {
+    name:'get_security_history',
+    description:'按带交易所前缀代码读取沪深北股票/ETF历史K线。支持1d及1/5/15/30/60分钟；1分钟仅不复权，窗口受限，必须读取quality、coverage与实际日期。不混拼来源/复权批次。价格人民币元，volume手，amount人民币元。日K timestamp是当地日期零点键，分钟timestamp是K线结束标签；原始时间保留。未完成K线is_final=false、未知null。默认升序每页200条，用next_cursor翻页；数据变化可令cursor过期。include_raw附原始响应。只返回行情，不计算指标和信号。',
+    inputSchema:{type:'object',properties:{symbol:{type:'string',pattern:'^(sh|sz|bj)[0-9]{6}$',description:'如sh563360、sz159842、sh600519、sz000001、bj920002'},period:{type:'string',enum:['1m','5m','15m','30m','60m','1d'],default:'1d'},start_date:{type:'string',pattern:'^[0-9]{4}-[0-9]{2}-[0-9]{2}$'},end_date:{type:'string',pattern:'^[0-9]{4}-[0-9]{2}-[0-9]{2}$'},adjust:{type:'string',enum:['none','qfq','hfq'],default:'none',description:'1分钟仅none；其他周期按供应商fqt获取'},refresh:{type:'boolean',default:false},include_raw:{type:'boolean',default:false},limit:{type:'integer',minimum:1,maximum:500,default:200},cursor:{type:'string',description:'上次响应next_cursor，查询口径保持一致'}},required:['symbol','start_date','end_date'],additionalProperties:false},annotations:{readOnlyHint:true},
+  },
   {
     name: 'get_market_snapshot',
     description: '获取全球资产最新可得数据：VIX/VXN，美债2/10/30年，黄金现货报价，布伦特近月期货、美股四指数、日经225和韩国KOSPI。含来源、交易日期、时间戳、延迟、前值与日变化。黄金主源为新浪伦敦金现货CFD，涨跌与同源昨结参考价比较；备用Gold API无前值则留空并标记instrument_changed。默认精简返回无历史；degraded为故障时的旧成功数据，不能作为新报价。不可把延迟或日终数据称为实时。',
@@ -37,11 +43,12 @@ export const mcpTools = [
 export async function callMarketTool(name: string, args: any = {}) {
   if (name === 'get_market_snapshot') return snapshot({refresh:args.refresh===true,include_history:args.include_history===true,include_raw:args.include_raw===true});
   if (name === 'get_market_catalog') return {
-    schema_version:'1.4', catalog, history_contract:historyContract, backup_sources:{volatility:'Cboe官方日终值（非盘中）',us_indices:'新浪同一指数报价；历史按需使用独立东方财富/Nasdaq序列，FRED备用',asian_indices:'Yahoo指数；东方财富 / NAVER同一指数备用报价；东方财富/NAVER独立历史',brent:'新浪CFD备用报价，instrument_changed=true；不可拼接相同合约历史'}, security_quotes:securityQueryInfo, freshness_policy:calendarPolicy, cache_policy:{normal_ttl_seconds:60,security_ttl_seconds:5,last_success_retention_days:14,storage:'D1 durable + bounded memory',degraded:'上游失败时返回最近成功数据，保留原fetched_at和行情时间；retrieved_at为本次返回时间'},
+    schema_version:'1.5', catalog, history_contract:historyContract, backup_sources:{volatility:'Cboe官方日终值（非盘中）',us_indices:'新浪同一指数报价；历史按需使用独立东方财富/Nasdaq序列，FRED备用',asian_indices:'Yahoo指数；东方财富 / NAVER同一指数备用报价；东方财富/NAVER独立历史',brent:'新浪CFD备用报价，instrument_changed=true；不可拼接相同合约历史'}, security_quotes:securityQueryInfo, security_history:securityHistoryInfo, freshness_policy:calendarPolicy, cache_policy:{normal_ttl_seconds:60,security_ttl_seconds:5,last_success_retention_days:14,storage:'D1 durable + bounded memory',degraded:'上游失败时返回最近成功数据，保留原fetched_at和行情时间；retrieved_at为本次返回时间'},
     gold: {primary:'新浪财经/汇通网伦敦金现货CFD', change_basis:'同源昨结参考价', fallback:'Gold API现货；无同源前值则不计算涨跌', previous_date:'上游未提供，不推测'},
-    notes:['quality为quote_quality兼容别名；历史状态必须读取history_quality。','布伦特主源为BZ=F近月连续期货，备用为新浪CFD，二者不是已核实同一合约；美债为官方日终par yield。','日线历史随请求取得，不提供任意历史区间和持久化快照。','缺失/过期项必须在分析中明示，不能补造数值。'],
+    notes:['quality为quote_quality兼容别名；历史状态必须读取history_quality。','布伦特主源为BZ=F近月连续期货，备用为新浪CFD，二者不是已核实同一合约；美债为官方日终par yield。','全球指标历史沿用近期窗口；证券历史由独立get_security_history按区间获取，不提供自动全市场归档。','缺失/过期项必须在分析中明示，不能补造数值。'],
   };
   if (name === 'get_security_quotes') return getSecurityQuotes(args.symbols, args.refresh === true, args.include_raw === true);
+  if (name === 'get_security_history') return getSecurityHistory(args);
   if(name==='get_market_history')return marketHistory(args.id,args.refresh===true);
   throw Error('Unknown tool');
 }
@@ -54,7 +61,7 @@ export async function POST(req: Request) {
   if (id === undefined) return new Response(null, {status:202});
   let result: any;
   if (method === 'server/discover') result = {supportedVersions:['2026-07-28'], capabilities:{tools:{}}};
-  else if (method === 'initialize') result = {protocolVersion:params?.protocolVersion || '2026-07-28', serverInfo:{name:'asset-observatory', version:'1.4.1'}, capabilities:{tools:{}}};
+  else if (method === 'initialize') result = {protocolVersion:params?.protocolVersion || '2026-07-28', serverInfo:{name:'asset-observatory', version:'1.5.0'}, capabilities:{tools:{}}};
   else if (method === 'ping') result = {};
   else if (method === 'tools/list') result = {tools:mcpTools};
   else if (method === 'tools/call') {

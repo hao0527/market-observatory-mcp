@@ -93,16 +93,16 @@ export async function snapshot(input:boolean|SnapshotOptions=false){
  let asian:Promise<any>|undefined;const asianShared=()=>asian??=fetchAsianBatch();
  let metrics=await Promise.all(catalog.map(item=>getMetric(item,options.refresh===true,shared,sinaShared,asianShared)));
  if(options.include_history)metrics=await Promise.all(metrics.map(m=>resolveHistory(m,options.refresh===true)));
- return {schema_version:'1.4',retrieved_at:new Date().toISOString(),fetched_at:new Date().toISOString(),cache_hit:metrics.every(m=>'delivery'in m&&m.delivery!=='upstream'),report_timezone:'Asia/Shanghai',metrics:metrics.map(m=>presentMetric(m,options.include_history,options.include_raw)),coverage:{available:metrics.filter(m=>m.quality==='available').length,degraded:metrics.filter(m=>m.quality==='degraded').length,stale:metrics.filter(m=>m.quality==='stale').length,unavailable:metrics.filter(m=>m.quality==='unavailable').length,total:catalog.length},notes:['逐项fetched_at为上游成功读取时间；retrieved_at为本次工具返回时间。','degraded表示上游失败后返回最近成功数据，不能当作新报价。','默认不附带历史及原始字段；历史通过get_market_history按需读取。','黄金及布油备用源instrument_changed=true时不可拼接为同一品种/合约历史；VIX/VXN备用源为日终值。']};
+ return {schema_version:'1.5',retrieved_at:new Date().toISOString(),fetched_at:new Date().toISOString(),cache_hit:metrics.every(m=>'delivery'in m&&m.delivery!=='upstream'),report_timezone:'Asia/Shanghai',metrics:metrics.map(m=>presentMetric(m,options.include_history,options.include_raw)),coverage:{available:metrics.filter(m=>m.quality==='available').length,degraded:metrics.filter(m=>m.quality==='degraded').length,stale:metrics.filter(m=>m.quality==='stale').length,unavailable:metrics.filter(m=>m.quality==='unavailable').length,total:catalog.length},notes:['逐项fetched_at为上游成功读取时间；retrieved_at为本次工具返回时间。','degraded表示上游失败后返回最近成功数据，不能当作新报价。','默认不附带历史及原始字段；历史通过get_market_history按需读取。','黄金及布油备用源instrument_changed=true时不可拼接为同一品种/合约历史；VIX/VXN备用源为日终值。']};
 }
 export async function marketHistory(id:string,refresh=false){
  const item=catalog.find(m=>m.id===id);if(!item)throw new DataError({code:'INVALID_ARGUMENT',message:'未知指标',retryable:false});
   // Unsupported history is a normal business result for a valid metric ID.
  if(item.id==='gold'){
   const status=presentMetric({...item,value:null,quality:null,quote_quality:null,quote_requested:false,history:[],source:null},true);
-  return {...status,schema_version:'1.4',error:status.history_error,history_basis:null,history_note:'黄金当前来源不提供可比历史，不以期货替代'};
+  return {...status,schema_version:'1.5',error:status.history_error,history_basis:null,history_note:'黄金当前来源不提供可比历史，不以期货替代'};
  }
  let treasury:ReturnType<typeof treasuryText>|undefined;const metric=await getMetric(item,refresh,()=>treasury??=treasuryText());
  const resolved=await resolveHistory(metric,refresh),result=presentMetric(resolved,true);
- return {...result,schema_version:'1.4',history_basis:result.history_available?item.kind==='treasury'?'official_daily_par_yield':'provider_daily_close':null,history_note:'quality仅为quote_quality的兼容别名；历史请读取history_quality及history_metadata。未收盘日线标forming，过期日线标stale，不与最新报价拼接或补算涨跌'};
+ return {...result,schema_version:'1.5',history_basis:result.history_available?item.kind==='treasury'?'official_daily_par_yield':'provider_daily_close':null,history_note:'quality仅为quote_quality的兼容别名；历史请读取history_quality及history_metadata。未收盘日线标forming，过期日线标stale，不与最新报价拼接或补算涨跌'};
 }

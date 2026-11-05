@@ -1,0 +1,61 @@
+import assert from 'node:assert/strict';
+export async function testSecurityHistory({securityHistory:h,calendar:c,cache,mcp}){
+ const realFetch=globalThis.fetch,realNow=Date.now;let checks=0,calls=0;
+ const at='2026-11-05T08:30:00Z',q={symbol:'sh563360',period:'1d',adjust:'none',start_date:'2026-10-01',end_date:'2026-11-05',limit:500,refresh:true};
+ function valid(r){checks++;assert.equal(r.history_available,r.history_count>0);assert.equal(r.history_count,r.bars.length);assert.equal(new Set(r.bars.map(b=>b.timestamp)).size,r.bars.length);assert.deepEqual([...r.bars].sort((a,b)=>a.timestamp-b.timestamp),r.bars);if(r.quality==='unavailable'||r.quality==='unsupported')assert.equal(r.history_count,0);for(const b of r.bars){assert(b.high>=Math.max(b.open,b.close,b.low));assert(b.low<=Math.min(b.open,b.close,b.high));assert(b.volume>=0);assert(b.amount>=0);assert(b.datetime.startsWith(r.actual_start_date)||b.datetime.slice(0,10)>=r.actual_start_date)}}
+ function raw(code='563360',market=1,name='A500ETF华泰柏瑞',klines=[]){return {rc:0,data:{code,market,name,klines}}}
+ function line(stamp,price=10){return `${stamp},${price},${price+1},${price+2},${price-1},123,123000,2,1,1,0.5`}
+ function reply(url){calls++;const u=new URL(url),p=u.searchParams,klt=Number(p.get('klt')),code=p.get('secid').split('.')[1],market=Number(p.get('secid').split('.')[0]);let start=p.get('beg').replace(/(\d{4})(\d{2})(\d{2})/,'$1-$2-$3'),end=p.get('end').replace(/(\d{4})(\d{2})(\d{2})/,'$1-$2-$3');const rows=[];
+  if(klt===1)start=end='2026-11-05';
+  for(let d=start;d<=end;d=c.shiftDate(d,1)){if(c.securityTradingDay(d)===false)continue;if(klt===101)rows.push(line(d));else for(const minute of c.minuteEnds(klt))rows.push(line(`${d} ${String(Math.floor(minute/60)).padStart(2,'0')}:${String(minute%60).padStart(2,'0')}`));}
+  return Response.json(raw(code,market,'sample-'+code,rows));
+ }
+ try{
+  Date.now=()=>Date.parse(at);globalThis.fetch=async url=>reply(url);cache.clearQuoteMemory();
+  for(const extra of [{symbol:'563360'},{symbol:'sh000001'},{symbol:'bj600519'},{symbol:'sz123001'},{symbol:'sz399006'},{symbol:'https://bad/'},{period:'2m'},{adjust:'foo'},{start_date:'2026-02-30'},{end_date:'2026-09-01'},{limit:501},{limit:1.1},{refresh:'true'},{cursor:'invalid'},{unknown:true},{start_date:'2020-01-01'}]){checks++;await assert.rejects(h.getSecurityHistory({...q,...extra}),e=>e.issue.code==='INVALID_ARGUMENT');}
+  const first=await h.getSecurityHistory({...q,include_raw:true});valid(first);assert.equal(first.history_count,21);assert.equal(first.quality,'available');assert.equal(first.coverage.expected_count,21);assert.equal(first.coverage.range_complete,true);assert.equal(first.history_refresh_status,'succeeded');assert(first.raw_responses.length);assert.equal(first.bars[0].volume,123);assert.equal(first.bars[0].amount,123000);assert.equal(first.bars[0].timestamp,Date.parse('2026-10-08T00:00:00+08:00')/1000);
+  const before=calls,cached=await h.getSecurityHistory({...q,refresh:false});valid(cached);assert.equal(calls,before);assert.equal(cached.cache_hit,true);assert.equal(cached.history_refresh_status,'not_attempted');assert.equal(cached.fetched_at,first.fetched_at);assert(!('raw_responses'in cached));
+  const forced=await h.getSecurityHistory(q);valid(forced);assert(calls>before);assert.equal(forced.cache_hit,false);
+  const all=[];let cursor;do{const r=await h.getSecurityHistory({...q,period:'5m',refresh:false,limit:100,...(cursor?{cursor}:{})});valid(r);all.push(...r.bars);assert.equal(r.pagination.total_count,1008);assert.equal(r.coverage.missing_count,0);cursor=r.pagination.next_cursor;}while(cursor);assert.equal(all.length,1008);assert.equal(new Set(all.map(b=>b.timestamp)).size,1008);
+  const page=await h.getSecurityHistory({...q,period:'15m',limit:10});valid(page);assert.equal(page.pagination.total_count,336);
+  const changed=await h.getSecurityHistory({...q,period:'15m',end_date:'2026-11-04',cursor:page.pagination.next_cursor});valid(changed);assert.equal(changed.history_error.code,'CURSOR_EXPIRED');
+  for(const period of ['30m','60m']){const r=await h.getSecurityHistory({...q,period});valid(r);assert.equal(r.pagination.total_count,period==='30m'?168:84);}
+  const min=await h.getSecurityHistory({...q,period:'1m'});valid(min);assert.equal(min.pagination.total_count,240);assert.equal(min.quality,'partial');assert.equal(min.available_start_date,'2026-11-05');assert.equal(min.coverage.missing_count,4800);
+  const old=await h.getSecurityHistory({...q,period:'1m',end_date:'2026-10-09'});valid(old);assert.equal(old.quality,'unsupported');assert.equal(old.history_refresh_error.causes[0].code,'HISTORY_RANGE_UNAVAILABLE');
+  for(const adjust of ['qfq','hfq']){const n=calls,r=await h.getSecurityHistory({...q,period:'1m',adjust});valid(r);assert.equal(r.quality,'unsupported');assert.equal(calls,n);assert.equal(r.history_error.code,'UNVERIFIED_ADJUSTMENT');}
+  const closed=await h.getSecurityHistory({...q,end_date:'2026-10-07'});valid(closed);assert.equal(closed.history_error.code,'NO_TRADING_SESSIONS');assert.equal(closed.history_refresh_status,'not_attempted');
+  const future=await h.getSecurityHistory({...q,start_date:'2026-12-01',end_date:'2026-12-05'});valid(future);assert.equal(future.quality,'unsupported');
+  for(const symbol of ['sh600519','sz000001','sz159842','bj920002']){const r=await h.getSecurityHistory({...q,symbol});valid(r);assert.equal(r.quality,'available');assert.equal(r.symbol,symbol);}
+  // Actual persistent backend abstraction, fresh worker, refresh failure, unchanged source timestamps.
+  const saved=new Map(),backend={read:async key=>saved.get(key)??null,write:async record=>saved.set(record.key,record)};cache.clearQuoteMemory();
+  const good=await cache.runWithQuoteCache(backend,()=>h.getSecurityHistory(q));valid(good);cache.clearQuoteMemory();globalThis.fetch=async()=>new Response('',{status:520});
+  const fallback=await cache.runWithQuoteCache(backend,()=>h.getSecurityHistory(q));valid(fallback);assert.equal(fallback.quality,'available');assert.equal(fallback.degraded,true);assert.equal(fallback.history_refresh_status,'failed');assert.equal(fallback.fetched_at,good.fetched_at);assert.equal(fallback.bars[0].fetched_at,good.bars[0].fetched_at);assert.equal(fallback.source_requests[0].delivery,'durable_cache');assert.equal(fallback.history_refresh_error.causes[0].http_status,520);
+  globalThis.fetch=async url=>{const r=reply(url);const d=await r.json();d.data.klines.shift();return Response.json(d)};cache.clearQuoteMemory();
+  const less=await cache.runWithQuoteCache(backend,()=>h.getSecurityHistory(q));valid(less);assert.equal(less.history_count,21);assert.equal(less.degraded,true);assert.equal(less.history_refresh_error.causes[0].code,'INCOMPLETE_HISTORY_REFRESH');
+  cache.clearQuoteMemory();globalThis.fetch=async url=>new URL(url).searchParams.get('beg')==='20261005'?new Response('',{status:520}):reply(url);
+  const partial=await h.getSecurityHistory({...q,period:'5m'});valid(partial);assert.equal(partial.quality,'partial');assert.equal(partial.pagination.total_count,912);assert(partial.history_refresh_error);assert.equal(partial.degraded,false);
+  cache.clearQuoteMemory();globalThis.fetch=async()=>Response.json(raw('563360',1,'test',[]));const empty=await h.getSecurityHistory(q);valid(empty);assert.equal(empty.quality,'unavailable');
+  // Parser invariants, conflicts, precision, adjusted prices and raw retention.
+  const query=h.validateSecurityHistory(q),p=h.parseSecurityKlines(raw('563360',1,'test',[line('2026-11-04'),line('2026-11-04')]),query,at);assert.equal(p.bars.length,1);assert.match(p.warnings[0],/DUPLICATES/);checks++;
+  assert.throws(()=>h.parseSecurityKlines(raw('563360',0,'test',[]),query,at),/不匹配/);checks++;
+  assert.throws(()=>h.parseSecurityKlines(raw('563360',1,'test',[line('2026-11-04'),line('2026-11-04',20)]),query,at),/冲突/);checks++;
+  const rejected=h.parseSecurityKlines(raw('563360',1,'test',['2026-02-30,1,2,3,0.5,1,2','2026-11-04,1,2,0,0.5,1,2','2026-11-07,1,2,3,0.5,1,2']),query,at);assert.equal(rejected.bars.length,0);assert.equal(rejected.rejected,3);checks++;
+  const minuteQuery=h.validateSecurityHistory({...q,period:'5m'}),forming=h.parseSecurityKlines(raw('563360',1,'test',[line('2026-11-05 09:35:00')]),minuteQuery,'2026-11-05T01:32:00Z').bars[0];assert.equal(forming.is_final,false);assert.equal(forming.source_datetime,'2026-11-05 09:35:00');assert.equal(forming.time_precision,'second');assert.equal(forming.timestamp,Date.parse('2026-11-05T09:35:00+08:00')/1000);checks++;
+  const unknown=h.parseSecurityKlines(raw('563360',1,'test',[line('2025-11-05')]),query,at);assert.equal(unknown.bars[0].is_final,null);checks++;
+  const afterHours=h.parseSecurityKlines(raw('300001',0,'sample',[line('2026-11-05')]),h.validateSecurityHistory({...q,symbol:'sz300001'}),'2026-11-05T07:10:00Z');assert.equal(afterHours.bars[0].is_final,false);assert.equal(afterHours.bars[0].bar_end,'2026-11-05T07:30:00.000Z');checks++;
+  const pendingClose=h.parseSecurityKlines(raw('563360',1,'sample',[line('2026-11-05')]),query,'2026-11-05T07:10:00Z');assert.equal(pendingClose.bars[0].is_final,null);checks++;
+  const confirmedClose=h.parseSecurityKlines(raw('563360',1,'sample',[line('2026-11-05')]),query,'2026-11-05T07:31:00Z');assert.equal(confirmedClose.bars[0].is_final,true);checks++;
+  assert.equal(c.securityTradingDay('2026-10-01'),false);assert.equal(c.securityTradingDay('2026-10-10'),false);assert.equal(c.securityTradingDay('2026-10-08'),true);assert.equal(c.securityTradingDay('2027-10-08'),null);checks++;
+  cache.clearQuoteMemory();Date.now=()=>Date.parse('2026-11-05T01:32:00Z');globalThis.fetch=async()=>Response.json(raw('563360',1,'test',[line('2026-11-05 09:35')]));const live=await h.getSecurityHistory({...q,period:'5m',start_date:'2026-11-05'});valid(live);assert.equal(live.bars[0].is_final,false);assert.equal(live.contains_forming,true);
+  Date.now=()=>Date.parse('2026-11-05T01:45:00Z');globalThis.fetch=async()=>new Response('',{status:520});const oldForming=await h.getSecurityHistory({...q,period:'5m',start_date:'2026-11-05'});valid(oldForming);assert.equal(oldForming.quality,'stale');assert.equal(oldForming.bars[0].is_final,false);
+  Date.now=()=>Date.parse(at);cache.clearQuoteMemory();globalThis.fetch=async url=>reply(url);
+  for(const adjust of ['qfq','hfq']){const r=await h.getSecurityHistory({...q,adjust});valid(r);assert.equal(r.adjustment_basis.retrieval_epoch,'2026-11-05');assert.equal(r.adjustment_basis.verified_factor_version,false);}
+  const req=args=>new Request('https://test.local/mcp',{method:'POST',body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'get_security_history',arguments:args}})});
+  const ok=await(await mcp.POST(req(q))).json();assert.equal(ok.result.isError,false);valid(JSON.parse(ok.result.content[0].text));
+  const no=await(await mcp.POST(req({...q,symbol:'563360'}))).json();assert.equal(no.result.isError,true);assert.equal(JSON.parse(no.result.content[0].text).error.code,'INVALID_ARGUMENT');checks++;
+  const unsupported=await(await mcp.POST(req({...q,period:'1m',adjust:'qfq'}))).json();assert.equal(unsupported.result.isError,false);assert.equal(JSON.parse(unsupported.result.content[0].text).quality,'unsupported');checks++;
+  const catalog=await mcp.callMarketTool('get_market_catalog',{});assert.equal(catalog.schema_version,'1.5');assert.equal(catalog.security_history.tool,'get_security_history');assert.equal(mcp.mcpTools.length,5);checks++;
+  cache.clearQuoteMemory();for(let i=0;i<17;i++)await cache.loadQuote('security-history-v1:memory-bound:'+i,async()=>({value:1,market_date:'2026-11-05',fetched_at:at}));let reloaded=0;await cache.loadQuote('security-history-v1:memory-bound:0',async()=>{reloaded++;return {value:1,market_date:'2026-11-05',fetched_at:at}});assert.equal(reloaded,1);checks++;
+  console.log(`PASS: ${checks} security-history scenarios; validation, source identity, OHLC/units, calendars, pagination/cursor, durable cache/restart, incomplete refresh protection, range filtering, partial/stale/forming/unsupported and MCP registration`);
+ }finally{globalThis.fetch=realFetch;Date.now=realNow;cache.clearQuoteMemory()}
+}

@@ -135,5 +135,5 @@ export async function getSecurityQuotes(input:unknown,refresh=false,includeRaw=f
   }catch(error){const issue=dataIssue(error);return {symbol,value:null,quality:'unavailable',error:issue.message,upstream_error:issue,fetched_at:null,retrieved_at:new Date().toISOString(),source:securityQueryInfo.source,source_url:`${securityQueryInfo.endpoint}${symbol}`}}
  }));
  const at=new Date().toISOString();
- return {schema_version:'1.4',fetched_at:at,retrieved_at:at,cache_hit:quotes.every(q=>q.delivery&&q.delivery!=='upstream'),report_timezone:'Asia/Shanghai',quotes,coverage:{available:quotes.filter(q=>q.quality==='available').length,degraded:quotes.filter(q=>q.quality==='degraded').length,unavailable:quotes.filter(q=>q.quality==='unavailable').length,total:quotes.length},notes:[...securityQueryInfo.notes,'每条fetched_at为上游成功读取时间；degraded表示上游失败后返回最近成功数据。']};
+ return {schema_version:'1.5',fetched_at:at,retrieved_at:at,cache_hit:quotes.every(q=>q.delivery&&q.delivery!=='upstream'),report_timezone:'Asia/Shanghai',quotes,coverage:{available:quotes.filter(q=>q.quality==='available').length,degraded:quotes.filter(q=>q.quality==='degraded').length,unavailable:quotes.filter(q=>q.quality==='unavailable').length,total:quotes.length},notes:[...securityQueryInfo.notes,'每条fetched_at为上游成功读取时间；degraded表示上游失败后返回最近成功数据。']};
 }
