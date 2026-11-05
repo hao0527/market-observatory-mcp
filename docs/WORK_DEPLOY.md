@@ -112,7 +112,7 @@ npm run typecheck
 | 检查 | 应看到的结果 |
 | --- | --- |
 | 站点身份 | 平台新建、归属当前账号、默认私有 |
-| MCP 目录 | 五个工具及来源 / 日历 / 缓存说明 |
+| MCP 目录 | 八个工具及来源 / 日历 / 缓存说明 |
 | 默认快照 | 无历史点；来源、日期、时间和 quality 完整 |
 | 指定证券 | 有效代码可读；无效代码单独失败 |
 | 最近成功缓存 | `cache_backend=durable`，正常写入无 `cache_warning` |
@@ -156,3 +156,10 @@ pnpm dev
 - **账号没有 Sites / Work**：该复现路径依赖产品能力开放；仅有本地源码不能替代平台权限。
 
 证券历史验收（v1.5）：独立调用get_security_history查询sh563360，检查日K、5/15分钟、1分钟实际窗口、none/qfq/hfq、limit/cursor、当前页计数与总数、source_requests、coverage及未完成K线。1分钟复权为unsupported。完整脚本为`node scripts/test-security-history-live.mjs`，不以部分数据冒充完整历史。
+
+
+## 证券归档复现（1.6.0）
+
+读取SECURITY_ARCHIVE.md，应用新增0001迁移后，确认生产DB绑定。部署完成调用configure_security_archive保存自己的观察列表；调用sync_security_history逐批完成归档（用job_id恢复），调用get_security_archive_status及get_security_history回读。必须通过站点支持的服务访问独立验收写入授权，不能只在本地内存验证。再通过当前Sites调度流程创建自己的16:05 Asia/Shanghai工作日任务，先检查已有automations以免重复。定时任务按配置采当日，补采最近失败作业；服务凭据只即时获取，不能存入任务提示词。保存任务不等于未来执行成功。未完成的新年份日历须明确unknown并停止声称完整归档。
+
+npm run test:cache同时运行真实SQLite归档测试，涵盖迁移、持久化重开、分页、来源隔离和中断恢复。在线验收脚本verify-security-archive-online.mjs的archive模式会写入2026-11-05的实际历史；其他日期按所需调整脚本后验证，不要不看日期重复运行。

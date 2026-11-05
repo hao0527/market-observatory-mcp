@@ -10,7 +10,7 @@ const isolated=process.env.SECURITY_RECOVERY_ISOLATED==='1';
 const mode=isolated?'isolated range error; window and backup data are real':'all upstream requests real';
 const results=[];
 try{
- for(const name of ['upstream','quote-cache','security-calendar','security-history']){
+ for(const name of ['upstream','quote-cache','security-calendar','security-store','security-history']){
   let code=ts.transpileModule(await readFile('lib/'+name+'.ts','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
   code=code.replace(/from '(\.\/[^']+)'/g,"from '$1.mjs'");await writeFile(join(dir,name+'.mjs'),code);
  }

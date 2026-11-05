@@ -1,3 +1,5 @@
+> 服务1.6.0补充：分钟区间使用一次有边界的完整范围请求及至多一次同源保留窗口恢复，不再按周重复请求。完整归档优先；主源不完整时也尝试整段备用并选择单一提供方。新增独立的bar_coverage/field_completeness/source_quality/cache_status/refresh_status/rejected_count。none长期归档、分日补采及3个新工具详见[SECURITY_ARCHIVE.md](SECURITY_ARCHIVE.md)，下文早期缓存描述以此补充为准。
+
 # 股票 / ETF 历史K线（Schema 1.5）
 
 独立工具 `get_security_history`，与最新报价/盘口、全球快照和全球历史分开。主源东方财富，不可用时可整段使用独立腾讯历史，经核实后整理原始字段，不生成技术指标，不合成其他周期或换源混拼。

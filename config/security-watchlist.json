@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "symbols": ["sh563360", "sh510300", "sh518850", "sz159842", "sh600519"],
+  "periods": ["1m", "5m", "15m", "1d"],
+  "adjust": "none",
+  "timezone": "Asia/Shanghai"
+}
