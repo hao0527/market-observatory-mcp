@@ -49,3 +49,8 @@ When Yahoo is unavailable, VIX/VXN use Cboe's official daily CSV (daily closes, 
 Brent can fall back to Sina `hf_OIL`, labelled as a CFD backup with `instrument_id=brent_sina_cfd` and `instrument_changed=true`; no exact match to the Yahoo futures contract is asserted. Its changes use the same response's prior settlement reference; no cross-provider price arithmetic. The caller must not concatenate these different contracts into one history.
 
 Source references: https://www.cboe.com/tradable-products/vix/vix-historical-data , https://finance.sina.com.cn/stock/usstock/sector.shtml , and the `source_url` on each result.
+
+
+## v1.4 contract corrections
+
+See HISTORY_CONTRACT.md: quote/history quality and capability/result semantics are independent. The history date policy is market-specific and does not reuse quote quality; Korean annual holidays remain unverified. Unsupported gold retains its legacy MCP error marker / HTTP 400 while providing full status fields.

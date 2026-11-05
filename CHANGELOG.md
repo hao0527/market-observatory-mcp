@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.0 — 2026-11-05
+
+- 历史能力与取得结果分离：报价源历史能力、独立历史能力、实际记录数及可用性分别返回；旧 history_supported 固定为能力别名。
+- quote_quality / history_quality 独立，保留 quality 报价兼容语义；空数组不再可用，迟到日线标 stale，未收盘日线标 forming，未知日历标 unknown。
+- 区分最近交易日、最后完整收盘日和日线完成状态；使用各市场当地时区，保留韩国未核实日历和临时休市的不确定性。
+- 核实 KOSPI 100.KS11 映射，增加经身份及交叉收盘核验的 NAVER 日韩历史备用；保留结构化错误链。
+- 明确 market_timezone / timestamp_timezone / report_timezone，保留 source_timezone；布伦特 Catalog 改为中性参考报价并保留品种隔离。
+- 四条 FRED 备用路由完成模拟故障验证；本轮真实 CSV 下载返回 503，明确记录不可用。
+- 保留黄金 MCP 错误标记和 HTTP 400，同时补全 unsupported 状态字段；指数 / ETF 盘口行为不变。
+- 36 组历史契约不变量场景及原有回归、类型与缓存 SQL 检查；部署和真实接口结果见质量修复报告。
+
 ## 1.3.0 — 2026-11-05
 
 - 新增日经 225、韩国 KOSPI，全球共 13 项指标；Yahoo 报价及东方财富 / NAVER 独立备用。

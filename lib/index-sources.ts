@@ -65,21 +65,51 @@ export function parseNasdaqHistory(data:any,id:string){
  if(data?.status?.rCode!==200||data?.data?.symbol!==nasdaqHistorySymbols[id])throw issue('Nasdaq历史指数代码不匹配');
  return validPoints((data.data.tradesTable?.rows??[]).map((r:any)=>{const m=r.date?.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);return {date:m?`${m[3]}-${m[1]}-${m[2]}`:'',value:number(String(r.close??'').replaceAll(',',''))??NaN}}),dateIn(Date.now(),'America/New_York'));
 }
+export function parseNaverHistory(data:any,id:string){
+ const spec=asianIndices[id];if(!spec||!Array.isArray(data))throw issue('NAVER历史格式或指数映射错误');
+ const points=data.map((row:any)=>{
+  if(id==='nikkei225'&&(row.worldIndexSymbol!=='.N225'||row.stockExchangeType?.zoneId!=='Asia/Tokyo'))throw issue('NAVER日经历史证券代码或时区不匹配');
+  if(id==='kospi'&&((row.itemCode&&row.itemCode!=='KOSPI')||(row.reutersCode&&row.reutersCode!=='KOSPI')||(row.worldIndexSymbol&&row.worldIndexSymbol!=='KOSPI')||(row.stockExchangeType?.zoneId&&row.stockExchangeType.zoneId!=='Asia/Seoul')))throw issue('NAVER韩国历史证券代码或时区不匹配');
+  const stamp=row.localTradedAt;
+  const date=typeof stamp==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(stamp)?stamp:typeof stamp==='string'&&/^\d{4}-\d{2}-\d{2}T.*\+09:00$/.test(stamp)&&Number.isFinite(Date.parse(stamp))?dateIn(Date.parse(stamp),spec.timezone):'';
+  return {date,value:number(String(row.closePrice??'').replaceAll(',',''))??NaN};
+ });
+ return validPoints(points,dateIn(Date.now(),spec.timezone));
+}
+function range(){const now=Date.now();return {from:new Date(now-65*86400000).toISOString().slice(0,10),to:new Date(now).toISOString().slice(0,10)}}
+function historyPayload(id:string,points:any[],source:string,url:string,series:string,extra:any={}){
+ return {value:points.at(-1).value,as_of:null,market_date:points.at(-1).date,fetched_at:new Date().toISOString(),data_type:asianIndices[id]?'provider_daily_index_bar':'provider_daily_index_close',history:points,history_source:source,history_source_url:url,history_series:series,source_timezone:asianIndices[id]?.timezone??'America/New_York',market_timezone:asianIndices[id]?.timezone??'America/New_York',instrument_id:id,...extra};
+}
+export async function fredIndexHistory(id:string){
+ const series=fredSeries[id];if(!series)throw issue('没有匹配的FRED序列');
+ const {from,to}=range(),url=`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${series}&cosd=${from}&coed=${to}`;
+ try{
+  const r=await fetchText(url,{attempts:1,timeoutMs:7000});
+  return historyPayload(id,parseFredHistory(r.text,series),'FRED',url,series,{raw_history_fields:r.text,publication_note:'FRED为日度指数转发源，可能发布滞后；日期落后仍标stale，不视为实时'});
+ }catch(error){throw new DataError({...dataIssue(error),source:'FRED',source_url:url})}
+}
 export async function independentIndexHistory(id:string){
  const series=fredSeries[id],asia=asianIndices[id];if(!series&&!asia)throw issue('无独立历史映射');
- const now=Date.now(),from=new Date(now-65*86400000).toISOString().slice(0,10),to=new Date(now).toISOString().slice(0,10);
- const spec=historyIndices[id],symbol=nasdaqHistorySymbols[id];
- let url=symbol?`https://api.nasdaq.com/api/quote/${symbol}/historical?assetclass=index&fromdate=${from}&todate=${to}&limit=60`:`https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=100.${spec.code}&klt=101&fqt=0&beg=${from.replaceAll('-','')}&end=${to.replaceAll('-','')}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53`;
- let points,source=symbol?'Nasdaq':'东方财富',providerSymbol=symbol??'100.'+spec.code,primaryError;
+ const {from,to}=range(),spec=historyIndices[id],symbol=nasdaqHistorySymbols[id];
+ const primarySource=symbol?'Nasdaq':'东方财富';
+ const url=symbol?`https://api.nasdaq.com/api/quote/${symbol}/historical?assetclass=index&fromdate=${from}&todate=${to}&limit=60`:`https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=100.${spec.code}&klt=101&fqt=0&beg=${from.replaceAll('-','')}&end=${to.replaceAll('-','')}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53`;
+ let primaryError;
  try{
-  const data=(await fetchJson(url,{timeoutMs:7000,headers:{'User-Agent':'Mozilla/5.0',Referer:symbol?'https://www.nasdaq.com/':'https://quote.eastmoney.com/'}})).data;
-  points=symbol?parseNasdaqHistory(data,id):parseAsianHistory(data,id);
- }catch(error){
-  if(!series)throw error;
-  primaryError=error instanceof DataError?error.issue:{code:'UPSTREAM_ERROR',message:'独立历史主源失败'};
-  url=`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${series}&cosd=${from}&coed=${to}`;
-  points=parseFredHistory((await fetchText(url,{timeoutMs:7000})).text,series);source='FRED';providerSymbol=series;
- }
- const last=points.at(-1)!;
- return {value:last.value,as_of:null,market_date:last.date,fetched_at:new Date().toISOString(),data_type:asia?'provider_daily_index_bar':'provider_daily_index_close',history:points,history_source:source,history_source_url:url,history_series:providerSymbol,source_timezone:asia?.timezone??'America/New_York',instrument_id:id,...(primaryError?{history_primary_error:primaryError}:{})};
+  const data=(await fetchJson(url,{attempts:1,timeoutMs:7000,headers:{'User-Agent':'Mozilla/5.0',Referer:symbol?'https://www.nasdaq.com/':'https://quote.eastmoney.com/'}})).data;
+  const points=symbol?parseNasdaqHistory(data,id):parseAsianHistory(data,id);
+  return historyPayload(id,points,primarySource,url,symbol??'100.'+spec.code,{raw_history_fields:data,history_source_attempts:[{source:primarySource,status:'success',source_url:url}]});
+ }catch(error){primaryError={...dataIssue(error),source:primarySource,source_url:url}}
+ try{
+  let result:any;
+  if(series)result=await fredIndexHistory(id);
+  else{
+   const url=id==='nikkei225'?'https://api.stock.naver.com/index/.N225/price?pageSize=60&page=1':'https://m.stock.naver.com/api/index/KOSPI/price?pageSize=60&page=1';
+   try{
+    const [prices,basic]=await Promise.all([fetchJson(url,{attempts:1,timeoutMs:7000,headers:{Referer:'https://m.stock.naver.com/','User-Agent':'Mozilla/5.0'}}),fetchJson(naverQuoteUrl(id),{attempts:1,timeoutMs:7000,headers:{Referer:'https://m.stock.naver.com/','User-Agent':'Mozilla/5.0'}})]);
+    const verified=parseNaverIndex(basic.data,id); // Verify instrument + timezone against this provider's basic endpoint.
+    result=historyPayload(id,parseNaverHistory(prices.data,id),'NAVER Finance',url,id==='nikkei225'?'.N225':'KOSPI',{market_status:verified.market_status,quote_market_date:verified.market_date,raw_history_fields:{prices:prices.data,basic:basic.data}});
+   }catch(error){throw new DataError({...dataIssue(error),source:'NAVER Finance',source_url:url})}
+  }
+  return {...result,history_primary_error:primaryError,history_source_attempts:[{source:primarySource,status:'failed',error:primaryError},{source:result.history_source,status:'success',source_url:result.history_source_url}]};
+ }catch(error){const last=dataIssue(error);throw new DataError({...last,causes:[primaryError,last]})}
 }

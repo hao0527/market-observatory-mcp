@@ -99,6 +99,12 @@ node scripts/check-public-source.mjs
 
 13 项全球指标。日韩报价优先 Yahoo，东方财富 / NAVER 提供同指数备用；日本已核实 2026–2027 日历及午休，韩国完整年度休市 / 特别时段尚未核实，明确返回不确定性。美股报价切换新浪后，按需历史可使用东方财富 / Nasdaq，FRED 备用。
 
+## 历史状态（v1.4）
+
+`quality` 保留为报价质量；历史必须单独读取 `history_quality`。`history_supported` 是支持路径的兼容能力别名，实际数据只看 `history_available` 和 `history_count`。空数组、失败或未请求不能被标为实际有历史。
+
+详细字段、黄金错误兼容、日韩日期和 FRED 限制见 [历史数据契约](docs/HISTORY_CONTRACT.md)。
+
 ## 文档与许可
 
 - [Work / Sites 复现、部署与验收](docs/WORK_DEPLOY.md)
@@ -109,3 +115,5 @@ node scripts/check-public-source.mjs
 - [MIT License](LICENSE)
 
 软件许可不替代数据供应商的条款或行情授权。仓库不包含个人账号凭据、作者站点身份、运行数据库或采集结果。
+
+- [第二轮质量修复与线上验收报告](docs/QUALITY_REPAIR_REPORT.md)

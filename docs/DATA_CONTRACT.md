@@ -1,4 +1,6 @@
-# 数据接口 v1.3
+# 数据接口
+
+v1.4 的历史字段以 [HISTORY_CONTRACT.md](HISTORY_CONTRACT.md) 为准，保留以下来源及品种说明。
 
 本项目只负责采集、解码、规范字段和说明质量。投资分析由调用方完成。
 
@@ -48,7 +50,7 @@
 
 Yahoo 原始响应已有可用历史时保留同源历史。备用历史整段来自一个来源，不拼接当前报价，不改变当前报价的昨收、参考日期和涨跌。即使最新报价全部失败，独立历史仍可读取。
 
-`history_metadata` 单独给出 source、source_url、series、market_date、fetched_at、retrieved_at、quality、degraded、freshness。历史更新可能落后最新报价；调用方必须看历史自己的日期及质量。当日 K 线可能未完成。失败返回 `history_supported=false`、`history_error`，不会删除其他可用字段。
+`history_metadata` 单独给出 source、source_url、series、market_date、fetched_at、retrieved_at、quality、degraded、freshness。历史更新可能落后最新报价；调用方必须看历史自己的日期及质量。当日 K 线可能未完成。失败返回 `history_available=false`、`history_quality=unavailable`、`history_error`；`history_supported` 为能力别名，不会删除其他可用字段。
 
 独立历史采用最长 65 个自然日请求并保留最近 22 个有效观测，缓存 5 分钟，故障时保留原成功时间。FRED 下载端可能返回 503，其备用能力不等于每次都可连接。Nasdaq COMP 与 NDX（纳斯达克 100）严格分开。
 

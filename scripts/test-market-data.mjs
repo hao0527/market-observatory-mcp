@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import ts from 'typescript';
+import {testHistoryQuality} from './history-quality-cases.mjs';
 const dir = await mkdtemp(join(tmpdir(), 'asset-data-test-'));
 const realFetch = globalThis.fetch;
 const realNow = Date.now;
@@ -18,8 +19,10 @@ try {
     ['lib/tencent.ts', 'tencent.mjs', {'./upstream':'./upstream.mjs','./quote-cache':'./quote-cache.mjs','./freshness':'./freshness.mjs','./time-metadata':'./time-metadata.mjs'}],
     ['lib/gold.ts', 'gold.mjs', {'./tencent':'./tencent.mjs','./upstream':'./upstream.mjs'}],
     ['lib/backup-sources.ts','backup-sources.mjs',{'./upstream':'./upstream.mjs','./tencent':'./tencent.mjs'}],
-    ['lib/market.ts', 'market.mjs', {'./index-sources':'./index-sources.mjs','./time-metadata':'./time-metadata.mjs','./backup-sources':'./backup-sources.mjs','./gold':'./gold.mjs','./upstream':'./upstream.mjs','./quote-cache':'./quote-cache.mjs','./freshness':'./freshness.mjs'}],
-    ['app/mcp/route.ts', 'mcp.mjs', {'@/lib/market':'./market.mjs','@/lib/tencent':'./tencent.mjs','@/lib/freshness':'./freshness.mjs','@/lib/upstream':'./upstream.mjs'}],
+    ['lib/history.ts','history.mjs',{'./index-sources':'./index-sources.mjs','./backup-sources':'./backup-sources.mjs','./freshness':'./freshness.mjs','./time-metadata':'./time-metadata.mjs','./quote-cache':'./quote-cache.mjs','./upstream':'./upstream.mjs'}],
+    ['lib/market.ts', 'market.mjs', {'./history':'./history.mjs','./index-sources':'./index-sources.mjs','./time-metadata':'./time-metadata.mjs','./backup-sources':'./backup-sources.mjs','./gold':'./gold.mjs','./upstream':'./upstream.mjs','./quote-cache':'./quote-cache.mjs','./freshness':'./freshness.mjs'}],
+    ['app/api/history/route.ts','api-history.mjs',{'@/lib/market':'./market.mjs','@/lib/upstream':'./upstream.mjs'}],
+    ['app/mcp/route.ts', 'mcp.mjs', {'@/lib/market':'./market.mjs','@/lib/tencent':'./tencent.mjs','@/lib/freshness':'./freshness.mjs','@/lib/history':'./history.mjs','@/lib/upstream':'./upstream.mjs'}],
   ]) {
     let code = ts.transpileModule(await readFile(input, 'utf8'), {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
     for (const [from,to] of Object.entries(imports)) code = code.replaceAll(`'${from}'`, `'${to}'`).replaceAll(`"${from}"`, `"${to}"`);
@@ -32,8 +35,10 @@ try {
   const backups=await import(pathToFileURL(join(dir,'backup-sources.mjs')));
   const indexSources=await import(pathToFileURL(join(dir,'index-sources.mjs')));
   const timeMeta=await import(pathToFileURL(join(dir,'time-metadata.mjs')));
+  const historyQuality=await import(pathToFileURL(join(dir,'history.mjs')));
   const market = await import(pathToFileURL(join(dir,'market.mjs')));
   const upstream = await import(pathToFileURL(join(dir,'upstream.mjs')));
+  const historyApi=await import(pathToFileURL(join(dir,'api-history.mjs')));
   const mcp = await import(pathToFileURL(join(dir,'mcp.mjs')));
   const fields = Array(90).fill('');
   Object.assign(fields, {0:'51',1:'ETF test',2:'159842',3:'0.972',4:'0.974',5:'0.969',6:'193222',9:'0.971',10:'4150',19:'0.972',20:'22075',30:'20261105094830',31:'-0.002',32:'-0.21',33:'0.975',34:'0.967',37:'1877',38:'0.24'});
@@ -210,7 +215,9 @@ try {
   assert.equal(independent.history.at(-1).value,101);assert.equal(independent.value,7688.6201);assert.equal(independent.previous_date,null);assert.equal(fredCalls,1); // Do not append/mix latest price or infer its baseline.
   globalThis.fetch=async url=>url.includes('fredgraph')?new Response(fred):new Response('',{status:503});
   cache.clearQuoteMemory();const historyOnly=await market.marketHistory('sp500',true);assert.equal(historyOnly.quality,'unavailable');assert.equal(historyOnly.history_metadata.quality,'available');
-  globalThis.fetch=async()=>new Response('',{status:503});cache.clearQuoteMemory();const noHistory=await market.marketHistory('sp500',true);assert.equal(noHistory.history_supported,false);assert.equal(noHistory.history_metadata.quality,'unavailable');assert.equal(noHistory.history_error.http_status,503);
+  globalThis.fetch=async()=>new Response('',{status:503});cache.clearQuoteMemory();const noHistory=await market.marketHistory('sp500',true);assert.equal(noHistory.history_supported,true);assert.equal(noHistory.history_count,0);assert.equal(noHistory.history_available,false);assert.equal(noHistory.history_metadata.quality,'unavailable');assert.equal(noHistory.history_error.http_status,503);
+  await testHistoryQuality({market,historyQuality,indexSources,cache,freshness,timeMeta});
+  for(const h of partialFailure.metrics){assert.equal(h.history_available,h.history_count>0);assert.equal(h.quote_quality,h.quality);assert.equal(h.history_supported,h.quote_source_history_supported===true||h.independent_history_supported)}
   const request = (method,params) => new Request('https://test.local/mcp',{method:'POST',body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});
   const listed = await (await mcp.POST(request('tools/list'))).json();
   assert(listed.result.tools.some(tool=>tool.name==='get_security_quotes'));
@@ -218,11 +225,18 @@ try {
   assert.equal(invalid.result.isError,true);
   const history = await (await mcp.POST(request('tools/call',{name:'get_market_history',arguments:{id:'gold'}}))).json();
   assert.equal(history.result.isError,true);
+  const goldStatus=JSON.parse(history.result.content[0].text);assert.equal(goldStatus.history_quality,'unsupported');assert.equal(goldStatus.history_count,0);assert.equal(goldStatus.history_available,false);
+  const goldHttp=await historyApi.GET(new Request('https://test.local/api/history?id=gold'));assert.equal(goldHttp.status,400);const goldBody=await goldHttp.json();assert.equal(goldBody.history_quality,'unsupported');assert.equal(typeof goldBody.error,'string');
   const discover = await (await mcp.POST(request('server/discover'))).json();
   assert.deepEqual(discover.result.supportedVersions,['2026-07-28']);
   console.log('PASS: quote arithmetic, field units, GBK record parsing, missing/zero prices, timestamps, stale quotes, symbol validation, partial failures, cache/refresh, gold baseline/fallback, MCP contracts');
   console.log('PASS: Asian index mappings and sessions, null index books vs zero security books, temporal precision, isolated independent history, no cross-provider arithmetic');
   console.log('PASS: durable fallback with original timestamps, retry bounds, US sessions/holidays/DST/early close, Treasury publishing window, compact snapshots, isolated history, partial source failure');
+  if(process.env.LIVE_FALLBACKS==='1'){
+    globalThis.fetch=async(url,options)=>url.includes('push2his.eastmoney.com')||url.includes('api.nasdaq.com')?new Response('',{status:503}):realFetch(url,options);Date.now=realNow;cache.clearQuoteMemory();
+    const results=await Promise.all(['sp500','nasdaq','dow','sox','nikkei225','kospi'].map(async id=>{try{const h=await indexSources.independentIndexHistory(id);const state=historyQuality.historyState({...market.catalog.find(m=>m.id===id),quality:null,history:h.history,history_metadata:{source:h.history_source,source_url:h.history_source_url,fetched_at:h.fetched_at,source_timezone:h.source_timezone,market_status:h.market_status,quote_market_date:h.quote_market_date}},true);return {id,result:'records',source:h.history_source,series:h.history_series,count:h.history.length,date:h.market_date,quality:state.history_quality,attempts:h.history_source_attempts}}catch(error){return {id,result:'unavailable',error:upstream.dataIssue(error)}}}));
+    console.log(JSON.stringify({live_fallbacks:results}));
+  }
   if (process.env.LIVE_DATA === '1') {
     cache.clearQuoteMemory();
     globalThis.fetch = realFetch;Date.now = realNow;

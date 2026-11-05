@@ -1,4 +1,4 @@
-export type DataIssue = {code:string; message:string; retryable:boolean; source_url?:string; http_status?:number;retry_after_seconds?:number};
+export type DataIssue = {code:string; message:string; retryable:boolean; source?:string; source_url?:string; http_status?:number;retry_after_seconds?:number;causes?:DataIssue[]};
 export class DataError extends Error {
   constructor(public issue:DataIssue){super(issue.message);this.name='DataError'}
 }

@@ -118,12 +118,14 @@ npm run typecheck
 | 最近成功缓存 | `cache_backend=durable`，正常写入无 `cache_warning` |
 | 缓存降级测试 | `degraded=true` 且原 `as_of` / `fetched_at` 不变 |
 | VIX / VXN 备用 | Cboe 日终值，不能标为盘中实时 |
-| 美股指数备用历史 | Sina 报价的独立历史通过 `history_metadata` 标明来源和日期；全部历史源失败返回 `history_supported=false` |
+| 美股指数备用历史 | Sina 报价的独立历史通过 `history_metadata` 标明来源和日期；全部历史源失败返回 `history_available=false`、`history_quality=unavailable`；`history_supported` 仍表示能力 |
 | 黄金 / 布油换源 | 检查 `instrument_changed` 和 `source_transition` |
 | 前值缺失 | 日变化为空，不能跨源补算 |
 | 日历覆盖之外 | 返回 `unknown`，不猜节假日 |
 
 日韩验收：目录包含 `nikkei225`、`kospi`；快照含各自时区 / 报价时间 / 昨收与日变化，未知的韩国年度日历不得伪称已核实。通过 `get_market_history` 验证按需历史；独立历史不能改变当前报价的参考值。查询 `sh000001` 时应返回 `order_book=null`、`order_book_status=unsupported`，前端应能正常显示。
+
+历史契约验收：检查 quote_quality 与 history_quality 独立；history_count=0 必须 history_available=false；历史 supported 是能力，不等于本次成功。日本当日日线未完成时为 forming，韩国未知日历保留 calendar_verified=false。运行 `LIVE_FALLBACKS=1 npm test` 可在本地模拟历史主源失败并访问真实备用源，不改变生产主源。全部可用不是验收前提，详见 HISTORY_CONTRACT.md。
 
 ## 10. 独立本地开发（可选）
 

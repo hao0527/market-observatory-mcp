@@ -88,3 +88,65 @@ export function qualifyQuote(q:any,kind:Parameters<typeof freshness>[1]){
  const f=freshness(q,kind);const invalid=f.status==='invalid_time'||!Number.isFinite(q.value);
  return {...q,freshness:f,stale:f.stale,quality:q.degraded?'degraded':invalid||q.quality==='partial'?'partial':f.stale?'stale':'available',...(q.degraded?{stale_note:'上游失败，返回最近成功数据；原报价时间未变'}:f.stale?{stale_note:f.reason}:{})};
 }
+
+/** History dates describe sessions, independently of the current quote's age. */
+export function historyTradingDay(date:string,timezone:string|null,kind:string):boolean|null{
+ if(kind==='commodity')return null;
+ const dow=new Date(date+'T12:00:00Z').getUTCDay();
+ if(timezone==='Asia/Seoul')return dow===0||dow===6?false:null;
+ if(timezone==='Asia/Tokyo')return trading(date,japanHolidays);
+ if(timezone==='America/New_York')return trading(date,kind==='treasury'?treasuryHolidays:equityHolidays);
+ return null;
+}
+export function historySession(q:any,kind:string,now=Date.now()){
+ const timezone=q.market_timezone??null;
+ const unknown=(reason:string,extra:any={})=>({market_timezone:timezone,latest_session_date:null,expected_last_completed_date:null,calendar_verified:false,calendar_scope:'scheduled_only',emergency_closures_verified:false,session_status:'unknown',close_minute:null,reason,...extra});
+ if(kind==='commodity')return unknown('商品合约的交易及结算日历未核实');
+ if(!timezone||!['America/New_York','Asia/Tokyo','Asia/Seoul'].includes(timezone))return unknown('没有已核实的该品种交易日历');
+ const here=local(now,timezone);
+ const status=q.market_status;
+ const observed=Date.parse(status?.observed_at??status?.as_of??'');
+ const recent=Number.isFinite(observed)&&now-observed>=-120000&&now-observed<=300000;
+ const state=recent?String(status.state).toUpperCase():'';
+ if(['SUSPENDED','HALTED','EMERGENCY_CLOSED'].includes(state))return unknown('供应商报告暂停或临时休市，无法推定完整收盘日',{session_status:'suspended'});
+ if(timezone==='Asia/Seoul'){
+  // No invented Korean annual calendar, year-opening or exam-day hours.
+  const p=q.provider_session,start=p?.start*1000,end=p?.end*1000;
+  const verifiedPeriod=Number.isFinite(start)&&Number.isFinite(end)&&end>start&&local(start,timezone).date===here.date&&local(end,timezone).date===here.date&&q.quote_market_date===here.date;
+  if(verifiedPeriod&&now>=start)return unknown('韩国年度日历未核实；本日时段采用供应商明确的时间边界',{latest_session_date:here.date,expected_last_completed_date:now>=end?here.date:q.quote_previous_date??null,session_status:now<end?'provider_open':'provider_closed',close_minute:local(end,timezone).minute,session_date:here.date,expectation_basis:'provider_session'});
+  if(state==='OPEN'&&q.quote_market_date===here.date)return unknown('供应商确认韩国当日开市；完整前一交易日与特殊收盘时刻未知',{latest_session_date:here.date,session_status:'provider_open',session_date:here.date,expectation_basis:'provider_market_status'});
+  return unknown('韩国年度休市及特别时段未完整核实，无法推定完整交易日',{session_status:state==='CLOSE'||state==='CLOSED'?'provider_closed':'unknown'});
+ }
+ const holidays=timezone==='Asia/Tokyo'?japanHolidays:kind==='treasury'?treasuryHolidays:equityHolidays;
+ const open=trading(here.date,holidays),prior=priorSession(here.date,holidays);
+ if(open===null||!prior)return unknown('日期超出已核实日历范围');
+ const start=timezone==='Asia/Tokyo'?540:570;
+ const close=timezone==='Asia/Tokyo'?930:kind==='treasury'?1110:earlyCloses.has(here.date)?780:960;
+ const lunch=timezone==='Asia/Tokyo'&&open&&here.minute>=690&&here.minute<750;
+ const scheduledOpen=open&&here.minute>=start&&here.minute<close&&!lunch;
+ if(scheduledOpen&&(state==='CLOSE'||state==='CLOSED'))return unknown('供应商状态与常规开市时段冲突，可能临时休市或特别安排');
+ return {market_timezone:timezone,latest_session_date:open&&here.minute>=start?here.date:prior,expected_last_completed_date:open&&here.minute>=close?here.date:prior,calendar_verified:true,calendar_scope:'scheduled_only',emergency_closures_verified:false,session_date:here.date,session_status:!open?'scheduled_closed':here.minute<start?'preopen':lunch?'lunch_break':here.minute<close?'scheduled_open':'scheduled_closed',close_minute:close,reason:kind==='treasury'?'按已核实美债日历及18:30应用发布检查线':'完整日线按市场当地收盘时刻判断；午休不结束当日日线'};
+}
+export function historyFreshness(q:any,kind:string,now=Date.now()){
+ const session=historySession(q,kind,now),day=q.market_date;
+ const base={...session,expected_date:session.expected_last_completed_date,expected_date_semantics:'alias_of_expected_last_completed_date',bar_status:'unknown',stale:false,status:'unknown'};
+ if(!day)return {...base,bar_status:'none',reason:'本次没有有效历史记录'};
+ const expected=session.expected_last_completed_date,latest=session.latest_session_date;
+ const knownDay=historyTradingDay(day,session.market_timezone,kind);
+ if(knownDay===false)return {...base,reason:'历史最新日期不是已核实的交易日'};
+ if(expected&&day<expected)return {...base,status:'stale',bar_status:'completed',stale:true,reason:'历史日期落后于应有完整收盘日'};
+ if(!session.market_timezone)return base;
+ const here=local(now,session.market_timezone);
+ if(day>here.date)return {...base,status:'invalid_time',reason:'历史日期在未来'};
+ if(kind==='treasury'&&q.data_type==='official_daily_par_yield'&&day===here.date)return {...base,status:'latest_completed_session',bar_status:'completed',reason:'官方当日日终收益率已公布；18:30仅为保守应用检查线，不把已公布值标为形成中的K线'};
+ if(latest&&day===latest&&(!expected||day>expected))return {...base,status:'forming_daily_bar',bar_status:'forming',reason:'当前交易日尚未取得完整收盘K线；午休仍为当日日线'};
+ if(expected&&day===expected){
+  const fetched=Date.parse(q.fetched_at??'');
+  const sampled=Number.isFinite(fetched)?local(fetched,session.market_timezone):null;
+  const observed=Date.parse(q.bar_observed_at??'');const observedLocal=Number.isFinite(observed)?local(observed,session.market_timezone):null;
+  const incomplete=q.data_type!=='official_daily_par_yield'&&session.close_minute!==null&&((sampled!==null&&sampled.date===day&&sampled.minute<session.close_minute)||(observedLocal!==null&&observedLocal.date===day&&observedLocal.minute<session.close_minute));
+  if(incomplete)return {...base,status:'stale',bar_status:'forming',stale:true,reason:'缓存中的当日K线采集于收盘前，尚未取得完整收盘K线'};
+  return {...base,status:'latest_completed_session',bar_status:'completed',reason:'历史日期符合应有完整收盘日'};
+ }
+ return {...base,reason:session.reason};
+}

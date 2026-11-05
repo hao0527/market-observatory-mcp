@@ -1,6 +1,7 @@
 import {snapshot, catalog, marketHistory} from '@/lib/market';
 import {getSecurityQuotes, securityQueryInfo} from '@/lib/tencent';
 import {calendarPolicy} from '@/lib/freshness';
+import {historyContract} from '@/lib/history';
 import {dataIssue} from '@/lib/upstream';
 
 export const mcpTools = [
@@ -12,7 +13,7 @@ export const mcpTools = [
   },
   {
     name: 'get_market_history',
-    description: '获取某指标最近约一个月的可得日线收盘；美债为官方日终收益率。黄金现货当前来源无历史，明确返回不支持；美股报价切换新浪时按需读取独立东方财富/Nasdaq日线，FRED备用，日韩可用东方财富独立历史；逐项标注history_metadata的来源、日期、质量，不与报价拼接；失败标注history_supported=false。',
+    description: '获取某指标最近约一个月的可得日线收盘；美债为官方日终收益率。黄金现货当前来源无历史，明确返回不支持；美股报价切换新浪时按需读取独立东方财富/Nasdaq日线，FRED备用，日韩可用东方财富/NAVER独立历史；逐项标注history_metadata的来源、日期、质量，不与报价拼接；能力字段history_supported仅表示支持路径；实际记录看history_available/history_count，历史质量独立看history_quality，不能用quote_quality/quality替代。',
     inputSchema: {type:'object',properties:{id:{type:'string',enum:catalog.map(m=>m.id)},refresh:{type:'boolean',description:'只刷新指定指标'}},required:['id'],additionalProperties:false},
     annotations: {readOnlyHint:true},
   },
@@ -36,9 +37,9 @@ export const mcpTools = [
 export async function callMarketTool(name: string, args: any = {}) {
   if (name === 'get_market_snapshot') return snapshot({refresh:args.refresh===true,include_history:args.include_history===true,include_raw:args.include_raw===true});
   if (name === 'get_market_catalog') return {
-    schema_version:'1.3', catalog, backup_sources:{volatility:'Cboe官方日终值（非盘中）',us_indices:'新浪同一指数报价；历史按需使用独立东方财富/Nasdaq序列，FRED备用',asian_indices:'Yahoo指数；东方财富 / NAVER同一指数备用报价；东方财富独立历史',brent:'新浪CFD备用报价，instrument_changed=true；不可拼接相同合约历史'}, security_quotes:securityQueryInfo, freshness_policy:calendarPolicy, cache_policy:{normal_ttl_seconds:60,security_ttl_seconds:5,last_success_retention_days:14,storage:'D1 durable + bounded memory',degraded:'上游失败时返回最近成功数据，保留原fetched_at和行情时间；retrieved_at为本次返回时间'},
+    schema_version:'1.4', catalog, history_contract:historyContract, backup_sources:{volatility:'Cboe官方日终值（非盘中）',us_indices:'新浪同一指数报价；历史按需使用独立东方财富/Nasdaq序列，FRED备用',asian_indices:'Yahoo指数；东方财富 / NAVER同一指数备用报价；东方财富/NAVER独立历史',brent:'新浪CFD备用报价，instrument_changed=true；不可拼接相同合约历史'}, security_quotes:securityQueryInfo, freshness_policy:calendarPolicy, cache_policy:{normal_ttl_seconds:60,security_ttl_seconds:5,last_success_retention_days:14,storage:'D1 durable + bounded memory',degraded:'上游失败时返回最近成功数据，保留原fetched_at和行情时间；retrieved_at为本次返回时间'},
     gold: {primary:'新浪财经/汇通网伦敦金现货CFD', change_basis:'同源昨结参考价', fallback:'Gold API现货；无同源前值则不计算涨跌', previous_date:'上游未提供，不推测'},
-    notes:['美债为官方日终par yield；布伦特为BZ=F近月期货。','日线历史随请求取得，不提供任意历史区间和持久化快照。','缺失/过期项必须在分析中明示，不能补造数值。'],
+    notes:['quality为quote_quality兼容别名；历史状态必须读取history_quality。','布伦特主源为BZ=F近月连续期货，备用为新浪CFD，二者不是已核实同一合约；美债为官方日终par yield。','日线历史随请求取得，不提供任意历史区间和持久化快照。','缺失/过期项必须在分析中明示，不能补造数值。'],
   };
   if (name === 'get_security_quotes') return getSecurityQuotes(args.symbols, args.refresh === true, args.include_raw === true);
   if(name==='get_market_history')return marketHistory(args.id,args.refresh===true);
@@ -53,13 +54,13 @@ export async function POST(req: Request) {
   if (id === undefined) return new Response(null, {status:202});
   let result: any;
   if (method === 'server/discover') result = {supportedVersions:['2026-07-28'], capabilities:{tools:{}}};
-  else if (method === 'initialize') result = {protocolVersion:params?.protocolVersion || '2026-07-28', serverInfo:{name:'asset-observatory', version:'1.3.0'}, capabilities:{tools:{}}};
+  else if (method === 'initialize') result = {protocolVersion:params?.protocolVersion || '2026-07-28', serverInfo:{name:'asset-observatory', version:'1.4.0'}, capabilities:{tools:{}}};
   else if (method === 'ping') result = {};
   else if (method === 'tools/list') result = {tools:mcpTools};
   else if (method === 'tools/call') {
     try {
       const data = await callMarketTool(params?.name, params?.arguments ?? {});
-      result = {content:[{type:'text', text:JSON.stringify(data)}], isError:false};
+      result = {content:[{type:'text', text:JSON.stringify(data)}], isError:params?.name==='get_market_history'&&data.id==='gold'&&data.history_quality==='unsupported'};
     } catch (error) {
       result = {content:[{type:'text', text:JSON.stringify({error:dataIssue(error)})}], isError:true};
     }
