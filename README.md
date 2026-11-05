@@ -103,7 +103,7 @@ node scripts/check-public-source.mjs
 
 13 项全球指标。日韩报价优先 Yahoo，东方财富 / NAVER 提供同指数备用；日本已核实 2026–2027 日历及午休，韩国完整年度休市 / 特别时段尚未核实，明确返回不确定性。美股报价切换新浪后，按需历史可使用东方财富 / Nasdaq，FRED 备用。
 
-## 历史状态（Schema v1.5，服务 1.6.0）
+## 历史状态（Schema v1.5，服务 1.6.1）
 
 `quality` 保留为报价质量；历史必须单独读取 `history_quality`。`history_supported` 是支持路径的兼容能力别名，实际数据只看 `history_available` 和 `history_count`。空数组、失败或未请求不能被标为实际有历史。
 
@@ -143,3 +143,5 @@ node scripts/check-public-source.mjs
 
 
 证券历史归档（服务1.6.0，Schema1.5兼容扩展）：新增可配置观察列表、持久化原始采集和已完成none K线、分日补采作业。主源不完整时也尝试完整备用区间，始终选单一提供方。详情见[归档契约](docs/SECURITY_ARCHIVE.md)。新增`configure_security_archive`、`sync_security_history`、`get_security_archive_status`，原有五工具保持职责。按现有Sites流程应用新增Drizzle迁移；部署后实际执行writer/readback，再创建云调度。调度是每个部署独立的账号资源，不会随克隆代码自动运行。不要复制作者任务或凭据。
+
+1.6.1补充无人值守入口：站点服务访问用于私有`/api/security-archive`执行与回读，MCP仍走其独立OAuth；不混用权限、不改Secrets。详情见归档契约。

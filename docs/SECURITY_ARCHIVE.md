@@ -68,3 +68,12 @@
 `node scripts/test-security-history-live.mjs`读取真实上游；`node scripts/test-security-history-recovery-live.mjs`核实区间/窗口及复权路径。`node scripts/verify-security-archive-online.mjs`通过真实线上MCP协议执行，凭据仅隐藏stdin，mode=matrix/archive/read分别验证查询矩阵/归档写入与回读/新进程持久化读取。归档模式会真实写入指定观察证券2026-11-05数据，使用前核对日期，不改生产主源。
 
 只承诺实际验证覆盖区间，不保证供应商将来持续保存同样长度。历史缺口若两个来源都无数据，保持partial并明确记录，归档不能倒推出已经丢失的真实行情。
+
+
+### 私有服务执行入口（1.6.1修复）
+
+实际平台验收证实：站点服务凭据可访问普通API，但`/mcp`仍要求独立OAuth（openid resource.invoke email）。二者不能混用，也不需要轮换Secret或放开站点访问。
+
+增加`/api/security-archive`，由同一owner-private平台边界验证服务访问；GET读取状态（可传job_id/fetch_id），POST `{"operation":"sync","arguments":{...}}`或`{"operation":"configure","arguments":{...}}`复用完全相同的归档函数。已有MCP工具保持独立OAuth。此入口不伪造visitor identity，不连接其他应用。
+
+在线脚本archive/read模式使用该服务API；matrix模式使用MCP OAuth `oauth_token`，或由ChatGPT原生MCP调用完成。未经OAuth的/mcp返回401是正确的权限边界，不能误报为业务参数或数据源故障。未来云任务若新工具尚未加载，可从get_site即时获取现有服务访问凭据，仅发给本站API；不可把凭据写进提示词、源码或报告。

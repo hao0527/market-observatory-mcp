@@ -77,7 +77,7 @@ export async function POST(req: Request) {
   if (id === undefined) return new Response(null, {status:202});
   let result: any;
   if (method === 'server/discover') result = {supportedVersions:['2026-07-28'], capabilities:{tools:{}}};
-  else if (method === 'initialize') result = {protocolVersion:params?.protocolVersion || '2026-07-28', serverInfo:{name:'asset-observatory', version:'1.6.0'}, capabilities:{tools:{}}};
+  else if (method === 'initialize') result = {protocolVersion:params?.protocolVersion || '2026-07-28', serverInfo:{name:'asset-observatory', version:'1.6.1'}, capabilities:{tools:{}}};
   else if (method === 'ping') result = {};
   else if (method === 'tools/list') result = {tools:mcpTools};
   else if (method === 'tools/call') {
