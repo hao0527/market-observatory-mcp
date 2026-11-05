@@ -44,7 +44,7 @@ If Sina fails, Gold API XAU spot is a fallback with `instrument_id=gold_spot_ind
 
 ## Independent fallback sources
 
-When Yahoo is unavailable, VIX/VXN use Cboe's official daily CSV (daily closes, never labelled intraday). SP500/Nasdaq/Dow/SOX use Sina quotes for the same indices; timestamps are provider update times, not tick times. Sina's index fallback has no daily history in this implementation and reports `history_supported=false`. Failures are structured and source transitions stay explicit.
+When Yahoo is unavailable, VIX/VXN use Cboe's official daily CSV (daily closes, never labelled intraday). SP500/Nasdaq/Dow/SOX use Sina quotes for the same indices; timestamps are provider update times, not tick times. Sina quotes have no daily history; get_market_history reads independent Eastmoney/Nasdaq histories with FRED backup and separate history_metadata. See DATA_CONTRACT.md for v1.3 Asian indices, precision, calendar coverage and null index order books. Failures are structured and source transitions stay explicit.
 
 Brent can fall back to Sina `hf_OIL`, labelled as a CFD backup with `instrument_id=brent_sina_cfd` and `instrument_changed=true`; no exact match to the Yahoo futures contract is asserted. Its changes use the same response's prior settlement reference; no cross-provider price arithmetic. The caller must not concatenate these different contracts into one history.
 

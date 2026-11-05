@@ -27,7 +27,7 @@ README 中提供了可直接复制的提示词。也可以追加以下验收要�
 5. get_market_history("vix") 只读取该指标；不支持历史的备用源应明确标注。
 6. 确认有 D1 持久缓存绑定，并检查 cache_backend / cache_warning。
 7. 不要为验收人为破坏生产源或关闭访问保护。故障与缓存过期用确定性测试验证。
-8. 报告实际可用项、来源、数据日期、降级或品种变化；不要将11/11作为必须造出的结果。
+8. 报告实际可用项、来源、数据日期、降级或品种变化；不要将13/13作为必须造出的结果。
 ```
 
 ## 3. 获取源码与执行环境
@@ -118,10 +118,12 @@ npm run typecheck
 | 最近成功缓存 | `cache_backend=durable`，正常写入无 `cache_warning` |
 | 缓存降级测试 | `degraded=true` 且原 `as_of` / `fetched_at` 不变 |
 | VIX / VXN 备用 | Cboe 日终值，不能标为盘中实时 |
-| 美股指数备用历史 | Sina 来源无日线时返回 `history_supported=false` |
+| 美股指数备用历史 | Sina 报价的独立历史通过 `history_metadata` 标明来源和日期；全部历史源失败返回 `history_supported=false` |
 | 黄金 / 布油换源 | 检查 `instrument_changed` 和 `source_transition` |
 | 前值缺失 | 日变化为空，不能跨源补算 |
 | 日历覆盖之外 | 返回 `unknown`，不猜节假日 |
+
+日韩验收：目录包含 `nikkei225`、`kospi`；快照含各自时区 / 报价时间 / 昨收与日变化，未知的韩国年度日历不得伪称已核实。通过 `get_market_history` 验证按需历史；独立历史不能改变当前报价的参考值。查询 `sh000001` 时应返回 `order_book=null`、`order_book_status=unsupported`，前端应能正常显示。
 
 ## 10. 独立本地开发（可选）
 

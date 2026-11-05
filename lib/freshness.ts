@@ -3,6 +3,8 @@ export const calendarPolicy={
   checked_on:'2026-11-05',
   equities:{years:[2026,2027,2028],source:'https://www.nyse.com/trade/hours-calendars'},
   treasury:{years:[2026],source:'https://www.sifma.org/resources/general/holiday-schedule',publication_check:'18:30 America/New_York (conservative application threshold, not an official release SLA)'},
+  japan:{years:[2026,2027],timezone:'Asia/Tokyo',sessions:['09:00-11:30','12:30-15:30'],source:'https://www.jpx.co.jp/english/corporate/about-jpx/calendar/'},
+  korea:{years:[],timezone:'Asia/Seoul',regular_hours:'09:00-15:30',calendar_verified:false,source:'https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T1.jsp',note:'未完整核实年度休市及特别开市时刻；仅确认同日报价年龄，不以工作日推定开市'},
   limitations:['不推测临时休市；日历覆盖之外返回unknown。','美债18:30检查线为应用保守阈值，非官方发布时间承诺。','黄金与布油仅按周末及报价年龄提示，未验证交易商/ICE节假日日历。','沪深北优先采用腾讯marketStat；个股停牌不可从市场状态推定。'],
 };
 const equityHolidays:Record<string,string[]>={
@@ -12,14 +14,44 @@ const equityHolidays:Record<string,string[]>={
 };
 const treasuryHolidays:Record<string,string[]>={'2026':['01-01','01-19','02-16','05-25','06-19','07-03','09-07','10-12','11-11','11-26','12-25']};
 const earlyCloses=new Set(['2026-11-27','2026-12-24','2027-11-26','2028-07-03','2028-11-24']);
+const japanHolidays:Record<string,string[]>={
+ '2026':['01-01','01-02','01-03','01-12','02-11','02-23','03-20','04-29','05-03','05-04','05-05','05-06','07-20','08-11','09-21','09-22','09-23','10-12','11-03','11-23','12-31'],
+ '2027':['01-01','01-02','01-03','01-11','02-11','02-23','03-21','03-22','04-29','05-03','05-04','05-05','07-19','08-11','09-20','09-23','10-11','11-03','11-23','12-31'],
+};
 function local(ms:number,tz:string){const parts=new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(ms));const p=Object.fromEntries(parts.map(v=>[v.type,v.value]));return {date:`${p.year}-${p.month}-${p.day}`,minute:Number(p.hour)*60+Number(p.minute)}}
 function previousDate(date:string){return new Date(Date.parse(date+'T12:00:00Z')-86400000).toISOString().slice(0,10)}
 function trading(date:string,holidays:Record<string,string[]>):boolean|null{const days=holidays[date.slice(0,4)];if(!days)return null;const dow=new Date(date+'T12:00:00Z').getUTCDay();return dow!==0&&dow!==6&&!days.includes(date.slice(5))}
 function priorSession(date:string,holidays:Record<string,string[]>):string|null {let d=previousDate(date);for(let i=0;i<12;i++,d=previousDate(d)){const open=trading(d,holidays);if(open===null)return null;if(open)return d}return null}
-export function freshness(q:any,kind:'equity'|'treasury'|'commodity'|'security',now=Date.now()) {
+export function freshness(q:any,kind:'equity'|'asian_equity'|'treasury'|'commodity'|'security',now=Date.now()) {
  const asOf=q.as_of?Date.parse(q.as_of):null;
  const age=asOf!==null&&Number.isFinite(asOf)?Math.round((now-asOf)/1000):null;
  if(asOf!==null&&(!Number.isFinite(asOf)||age! < -120))return {status:'invalid_time',expected_date:null,reason:'行情时间无效或明显在未来',stale:false,age_seconds:age};
+ if(kind==='asian_equity'){
+   const tz=q.market_timezone||q.source_timezone,here=local(now,tz),day=q.market_date;
+   if(typeof day!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(day)||day>here.date)return {status:'invalid_time',expected_date:null,reason:'日韩指数交易日期无效或在未来',stale:false,age_seconds:age};
+   if(tz==='Asia/Seoul'){
+     const sameDay=day===here.date,old=sameDay&&age!==null&&here.minute>=540&&here.minute<930&&age>1200;
+     return {status:old?'suspect_stale':sameDay&&age!==null&&age<=1200?'recent_quote':'unknown',expected_date:null,market_timezone:tz,calendar_verified:false,reason:old?'韩国同日报价超过20分钟；需核对特别交易时段':sameDay&&age!==null&&age<=1200?'已取得同日近期报价；韩国年度休市及特别时段未完整核实':'韩国完整日历未核实，不推定休市、开市或上一交易日',stale:old,age_seconds:age};
+   }
+   if(tz!=='Asia/Tokyo')return {status:'unknown',expected_date:null,reason:'未支持的日韩市场时区',stale:false,age_seconds:age};
+   if(q.data_type==='provider_daily_index_bar'){
+     const open=trading(here.date,japanHolidays),expected=open&&here.minute>=945?here.date:priorSession(here.date,japanHolidays);
+     if(open===null||!expected)return {status:'unknown',expected_date:null,reason:'日本日线超出已核实日历',stale:false,age_seconds:age};
+     const old=day<expected;return {status:old?'stale':day===here.date&&here.minute<945?'forming_daily_bar':'latest_session',expected_date:expected,reason:old?'历史日线早于应有交易日':'日线仅提供日期；当日K线可能未完成',stale:old,age_seconds:age};
+   }
+   const open=trading(here.date,japanHolidays);if(open===null)return {status:'unknown',expected_date:null,reason:'日本年份超出已核实日历',stale:false,age_seconds:age};
+   const session=open&&((here.minute>=540&&here.minute<690)||(here.minute>=750&&here.minute<945));
+   const lunch=open&&here.minute>=690&&here.minute<750;
+   const expected=open&&here.minute>=540?here.date:priorSession(here.date,japanHolidays);
+   if(!expected)return {status:'unknown',expected_date:null,reason:'日本前一交易日超出已核实日历',stale:false,age_seconds:age};
+   if(open&&here.minute>=540&&here.minute<555&&day<here.date)return {status:'awaiting_update',expected_date:expected,reason:'日本开盘15分钟宽限期',stale:false,age_seconds:age};
+   let old=day<expected;
+   if(session&&age!==null&&age>1200&&here.minute>=555&&!(here.minute>=750&&here.minute<765))old=true;
+   if(asOf!==null&&day===expected&&(!open||here.minute>=945||here.minute<540||lunch)){
+     const quote=local(asOf,tz),cutoff=lunch?670:910;if(quote.date===expected&&quote.minute<cutoff)old=true;
+   }
+   return {status:old?'stale':lunch?'lunch_break':session?'current':'latest_session',expected_date:expected,market_timezone:tz,calendar_verified:true,reason:old?'日本报价早于应有交易日或时段阈值':lunch?'日本午间休市，保留上午最后报价':'按JPX现金市场日历、午休及时段判断；不推定临时休市',stale:old,age_seconds:age};
+ }
  if(kind==='security'){
    const market=q.market_status;const recent=market?.as_of&&Math.abs(now-Date.parse(market.as_of))<300000;
    const state=recent?market.state:'unknown';
@@ -39,7 +71,7 @@ export function freshness(q:any,kind:'equity'|'treasury'|'commodity'|'security',
  const isOpenDay=trading(ny.date,holidays);
  if(isOpenDay===null)return {status:'unknown',expected_date:null,reason:'当前年份超出已核实日历范围',stale:false,age_seconds:age};
  const close=earlyCloses.has(ny.date)?13*60:16*60;
- const dailyIndex=q.data_type==='official_daily_index_close';
+ const dailyIndex=['official_daily_index_close','provider_daily_index_close'].includes(q.data_type);
  const inSession=kind==='equity'&&!dailyIndex&&isOpenDay&&ny.minute>=570&&ny.minute<close+15;
  const due=kind==='treasury'||dailyIndex?isOpenDay&&ny.minute>=18*60+30:isOpenDay&&ny.minute>=close+15;
  const expected=(inSession||due)?ny.date:priorSession(ny.date,holidays);

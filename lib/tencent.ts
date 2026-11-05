@@ -1,3 +1,4 @@
+import {temporalMetadata} from './time-metadata';
 import {fetchText,DataError,dataIssue} from './upstream';
 import {loadQuote} from './quote-cache';
 import {qualifyQuote} from './freshness';
@@ -88,7 +89,7 @@ export function parseTencentQuote(symbol: string, fields: string[], fetchedAt: s
     provider_change: num(fields[31]), provider_change_percent: num(fields[32]),
     open: num(fields[5]), high: num(fields[33]), low: num(fields[34]),
     volume_lots: num(fields[6]), turnover_wan_cny: num(fields[37]), turnover_rate_percent: num(fields[38]),
-    order_book: {volume_unit: '手', bids, asks},
+    order_book: assetType==='index'?null:{volume_unit:'手',bids,asks}, order_book_supported:assetType==='index'?false:assetType==='unknown'?null:true, order_book_status:assetType==='index'?'unsupported':assetType==='unknown'?'unverified':'provided',
     as_of: asOf, as_of_local: asOf ? fields[30].replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/, '$1-$2-$3 $4:$5:$6') : null,
     market_date: asOf ? fields[30].slice(0,8).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3') : null,
     source_timezone: 'Asia/Shanghai', fetched_at: fetchedAt,
@@ -127,11 +128,12 @@ export async function getSecurityQuotes(input:unknown,refresh=false,includeRaw=f
     if(!fields)throw new DataError({code:'NO_QUOTE',message:'上游未返回该代码，可能不存在或暂未覆盖',retryable:false,source_url:`${securityQueryInfo.endpoint}${symbol}`});
     return {...parseTencentQuote(symbol,fields,batch.at,batch.markets[symbol.slice(0,2)]??null),fetch_attempts:batch.attempts};
    },{refresh,ttlMs:5000});
-   const quote=qualifyQuote(data,'security');
+   const quote=temporalMetadata(qualifyQuote(data,'security'));
+   if(quote.asset_type==='index'){quote.order_book=null;quote.order_book_supported=false;quote.order_book_status='unsupported'}
    if(includeRaw)quote.raw={encoding:'GB18030',delimiter:'~',fields:quote.raw_fields};
    delete quote.raw_fields;return quote;
   }catch(error){const issue=dataIssue(error);return {symbol,value:null,quality:'unavailable',error:issue.message,upstream_error:issue,fetched_at:null,retrieved_at:new Date().toISOString(),source:securityQueryInfo.source,source_url:`${securityQueryInfo.endpoint}${symbol}`}}
  }));
  const at=new Date().toISOString();
- return {schema_version:'1.2',fetched_at:at,retrieved_at:at,cache_hit:quotes.every(q=>q.delivery&&q.delivery!=='upstream'),report_timezone:'Asia/Shanghai',quotes,coverage:{available:quotes.filter(q=>q.quality==='available').length,degraded:quotes.filter(q=>q.quality==='degraded').length,unavailable:quotes.filter(q=>q.quality==='unavailable').length,total:quotes.length},notes:[...securityQueryInfo.notes,'每条fetched_at为上游成功读取时间；degraded表示上游失败后返回最近成功数据。']};
+ return {schema_version:'1.3',fetched_at:at,retrieved_at:at,cache_hit:quotes.every(q=>q.delivery&&q.delivery!=='upstream'),report_timezone:'Asia/Shanghai',quotes,coverage:{available:quotes.filter(q=>q.quality==='available').length,degraded:quotes.filter(q=>q.quality==='degraded').length,unavailable:quotes.filter(q=>q.quality==='unavailable').length,total:quotes.length},notes:[...securityQueryInfo.notes,'每条fetched_at为上游成功读取时间；degraded表示上游失败后返回最近成功数据。']};
 }

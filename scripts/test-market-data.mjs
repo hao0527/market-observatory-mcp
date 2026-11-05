@@ -13,10 +13,12 @@ try {
     ['lib/upstream.ts','upstream.mjs',{}],
     ['lib/quote-cache.ts','quote-cache.mjs',{'./upstream':'./upstream.mjs'}],
     ['lib/freshness.ts','freshness.mjs',{}],
-    ['lib/tencent.ts', 'tencent.mjs', {'./upstream':'./upstream.mjs','./quote-cache':'./quote-cache.mjs','./freshness':'./freshness.mjs'}],
+    ['lib/time-metadata.ts','time-metadata.mjs',{}],
+    ['lib/index-sources.ts','index-sources.mjs',{'./upstream':'./upstream.mjs'}],
+    ['lib/tencent.ts', 'tencent.mjs', {'./upstream':'./upstream.mjs','./quote-cache':'./quote-cache.mjs','./freshness':'./freshness.mjs','./time-metadata':'./time-metadata.mjs'}],
     ['lib/gold.ts', 'gold.mjs', {'./tencent':'./tencent.mjs','./upstream':'./upstream.mjs'}],
     ['lib/backup-sources.ts','backup-sources.mjs',{'./upstream':'./upstream.mjs','./tencent':'./tencent.mjs'}],
-    ['lib/market.ts', 'market.mjs', {'./backup-sources':'./backup-sources.mjs','./gold':'./gold.mjs','./upstream':'./upstream.mjs','./quote-cache':'./quote-cache.mjs','./freshness':'./freshness.mjs'}],
+    ['lib/market.ts', 'market.mjs', {'./index-sources':'./index-sources.mjs','./time-metadata':'./time-metadata.mjs','./backup-sources':'./backup-sources.mjs','./gold':'./gold.mjs','./upstream':'./upstream.mjs','./quote-cache':'./quote-cache.mjs','./freshness':'./freshness.mjs'}],
     ['app/mcp/route.ts', 'mcp.mjs', {'@/lib/market':'./market.mjs','@/lib/tencent':'./tencent.mjs','@/lib/freshness':'./freshness.mjs','@/lib/upstream':'./upstream.mjs'}],
   ]) {
     let code = ts.transpileModule(await readFile(input, 'utf8'), {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
@@ -28,6 +30,8 @@ try {
   const cache = await import(pathToFileURL(join(dir,'quote-cache.mjs')));
   const freshness = await import(pathToFileURL(join(dir,'freshness.mjs')));
   const backups=await import(pathToFileURL(join(dir,'backup-sources.mjs')));
+  const indexSources=await import(pathToFileURL(join(dir,'index-sources.mjs')));
+  const timeMeta=await import(pathToFileURL(join(dir,'time-metadata.mjs')));
   const market = await import(pathToFileURL(join(dir,'market.mjs')));
   const upstream = await import(pathToFileURL(join(dir,'upstream.mjs')));
   const mcp = await import(pathToFileURL(join(dir,'mcp.mjs')));
@@ -152,7 +156,7 @@ try {
   const one=await market.marketHistory('sp500',true);assert.equal(requested.length,1);assert.equal(one.history.length,2);assert(requested[0].includes('GSPC'));
   const compact=market.presentMetric({...one,raw_fields:['secret-wire']});assert(!('history'in compact));assert(!('raw_fields'in compact));
   assert.equal(market.presentMetric(one,true).history.length,2);
-  const partialFailure=await market.snapshot({refresh:true});assert.equal(partialFailure.metrics.length,11);assert(!partialFailure.metrics.some(m=>'history'in m));
+  const partialFailure=await market.snapshot({refresh:true});assert.equal(partialFailure.metrics.length,13);assert(!partialFailure.metrics.some(m=>'history'in m));
   const cboe=backups.parseCboeHistory('DATE,OPEN,HIGH,LOW,CLOSE\n11/03/2026,21,22,20,20.83\n11/04/2026,19,20,16,16.61','vix');
   assert.equal(cboe.value,16.61);assert.equal(cboe.previous_close,20.83);assert.equal(cboe.as_of,null);
   assert.equal(freshness.freshness(cboe,'equity',Date.parse('2026-11-05T16:00:00Z')).stale,false); // Daily fallback is not expected to update intraday.
@@ -162,6 +166,51 @@ try {
   const oil=backups.parseSinaBackup('var hq_str_hf_OIL="94.355,,94.300,94.320,94.760,93.440,09:48:00,94.620,94.620,0,2,2,2026-11-05,布伦特原油,16257";','brent');
   assert.equal(oil.instrument_changed,true);assert.equal(oil.quote_kind,'commodity_cfd');assert.equal(oil.previous_close,94.62);assert.equal(oil.history_supported,false);
   assert.throws(()=>backups.parseSinaBackup('var hq_str_gb_$inx="'+gb.join(',').replace('标普500指数','unrelated')+'";','sp500'),/品种/);
+  // Index absence differs from a zero-liquidity security book.
+  const indexFields=[...fields];indexFields[2]='000001';indexFields[61]='ZS';indexFields[9]='0';indexFields[10]='0';
+  const indexBook=tencent.parseTencentQuote('sh000001',indexFields,'2026-11-05T01:48:35Z');
+  assert.equal(indexBook.order_book,null);assert.equal(indexBook.order_book_supported,false);
+  const etfFields=[...fields];etfFields[61]='ETF';etfFields[9]='0';etfFields[10]='0';
+  assert.equal(tencent.parseTencentQuote('sz159842',etfFields,'2026-11-05T01:48:35Z').order_book.bids[0].volume_lots,0);
+  const dailyMeta=timeMeta.temporalMetadata(cboe);assert.equal(dailyMeta.time_precision,'date');assert.equal(dailyMeta.as_of,null);assert.equal(dailyMeta.previous_date_status,'provided');
+  assert.equal(timeMeta.temporalMetadata(sinaIndex).previous_date_status,'not_provided');
+  const asiaWire={data:{diff:[{f12:'N225',f13:100,f14:'日经225',f2:40000,f18:39000,f124:Date.parse('2026-11-05T01:48:00Z')/1000}]}};
+  const asia=indexSources.parseAsianIndex(asiaWire,'nikkei225');assert.equal(asia.market_date,'2026-11-05');assert.equal(asia.source_timezone,'Asia/Tokyo');assert.equal(asia.previous_date,null);assert.equal(asia.change,1000);
+  assert.throws(()=>indexSources.parseAsianIndex(asiaWire,'kospi'),/不匹配/);
+  assert.throws(()=>indexSources.parseAsianIndex({data:{diff:[{...asiaWire.data.diff[0],f124:Date.parse('2026-11-06T01:00:00Z')/1000}]}},'nikkei225'),/时间/);
+  let asianRequests=[];
+  globalThis.fetch=async url=>{asianRequests.push(url);if(url.includes('naver'))return new Response('',{status:503});if(url.includes('KS11'))return new Response('',{status:503});return Response.json({data:{f57:'N225',f58:'日经225',f43:40000,f60:39000,f86:Date.parse('2026-11-05T01:48:00Z')/1000}})};
+  const splitAsia=await indexSources.fetchAsianBatch();assert.equal(indexSources.parseAsianIndex(splitAsia,'nikkei225').value,40000);assert.throws(()=>indexSources.parseAsianIndex(splitAsia,'kospi'),/503/);assert.equal(asianRequests.filter(url=>url.includes('/stock/get?')).length,2);
+  const naverQuote=indexSources.parseNaverIndex({stockEndType:'index',reutersCode:'KOSPI',stockExchangeType:{zoneId:'Asia/Seoul',delayTime:0},closePrice:'2,600.00',compareToPreviousClosePrice:'-10.00',fluctuationsRatio:'-0.38',localTradedAt:'2026-11-05T10:48:00+09:00',marketStatus:'OPEN'},'kospi');
+  assert.equal(naverQuote.previous_close,2610);assert.equal(naverQuote.previous_date,null);assert.equal(naverQuote.as_of,'2026-11-05T01:48:00.000Z');assert.equal(naverQuote.provider_delay_minutes,0);
+  assert.throws(()=>indexSources.parseNaverIndex({...naverQuote,stockEndType:'index',reutersCode:'NDX'},'nikkei225'),/不匹配/);
+  const jp=(day,time,now)=>freshness.freshness({market_date:day,as_of:time,market_timezone:'Asia/Tokyo'},'asian_equity',Date.parse(now));
+  assert.equal(jp('2026-11-05','2026-11-05T00:55:00Z','2026-11-05T01:00:00Z').status,'current'); // A-share 09:00 = Tokyo 10:00.
+  assert.equal(jp('2026-11-02','2026-11-02T06:30:00Z','2026-11-03T01:00:00Z').stale,false); // Culture Day.
+  assert.equal(jp('2026-11-05','2026-11-05T02:30:00Z','2026-11-05T03:00:00Z').status,'lunch_break');
+  assert.equal(jp('2026-11-05','2026-11-05T01:00:00Z','2026-11-05T03:00:00Z').stale,true); // Old before lunch.
+  assert.equal(jp('2026-11-04','2026-11-04T06:30:00Z','2026-11-05T01:00:00Z').stale,true);
+  assert.equal(jp('2029-11-05',null,'2029-11-05T01:00:00Z').status,'unknown');
+  const kr=freshness.freshness({market_date:'2026-11-04',as_of:'2026-11-04T06:30:00Z',market_timezone:'Asia/Seoul'},'asian_equity',Date.parse('2026-11-05T01:00:00Z'));
+  assert.equal(kr.status,'unknown');assert.equal(kr.calendar_verified,false); // Never infer Korean holidays from US/JP.
+  assert.deepEqual(indexSources.parseNasdaqHistory({status:{rCode:200},data:{symbol:'SOX',tradesTable:{rows:[{date:'11/04/2026',close:'10,400.50'}]}}},'sox'),[{date:'2026-11-04',value:10400.5}]);
+  assert.throws(()=>indexSources.parseNasdaqHistory({status:{rCode:200},data:{symbol:'NDX'}},'nasdaq'),/不匹配/); // COMP is Composite; NDX is not.
+  const fred='observation_date,SP500\n2026-11-02,99\n2026-11-03,.\n2026-11-04,101\n2026-02-30,20\n2026-11-06,999';
+  assert.deepEqual(indexSources.parseFredHistory(fred,'SP500'),[{date:'2026-11-02',value:99},{date:'2026-11-04',value:101}]);
+  assert.throws(()=>indexSources.parseFredHistory(fred,'NASDAQSOX'),/序列/);
+  cache.clearQuoteMemory();let fredCalls=0;
+  globalThis.fetch=async url=>{
+    if(url.includes('yahoo'))return new Response('',{status:429});
+    if(url.includes('sinajs'))return new Response(Buffer.concat([Buffer.from('var hq_str_gb_$inx="'),Buffer.from('b1eac6d5353030d6b8cafd','hex'),Buffer.from(','+gb.slice(1).join(',')+'";')]));
+    if(url.includes('fredgraph')){fredCalls++;return new Response(fred)}
+    throw Error('Unexpected source');
+  };
+  const independent=await market.marketHistory('sp500',true);
+  assert.equal(independent.source,'新浪财经',JSON.stringify(independent));assert.equal(independent.history_metadata.source,'FRED');assert.equal(independent.history_supported,true);
+  assert.equal(independent.history.at(-1).value,101);assert.equal(independent.value,7688.6201);assert.equal(independent.previous_date,null);assert.equal(fredCalls,1); // Do not append/mix latest price or infer its baseline.
+  globalThis.fetch=async url=>url.includes('fredgraph')?new Response(fred):new Response('',{status:503});
+  cache.clearQuoteMemory();const historyOnly=await market.marketHistory('sp500',true);assert.equal(historyOnly.quality,'unavailable');assert.equal(historyOnly.history_metadata.quality,'available');
+  globalThis.fetch=async()=>new Response('',{status:503});cache.clearQuoteMemory();const noHistory=await market.marketHistory('sp500',true);assert.equal(noHistory.history_supported,false);assert.equal(noHistory.history_metadata.quality,'unavailable');assert.equal(noHistory.history_error.http_status,503);
   const request = (method,params) => new Request('https://test.local/mcp',{method:'POST',body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});
   const listed = await (await mcp.POST(request('tools/list'))).json();
   assert(listed.result.tools.some(tool=>tool.name==='get_security_quotes'));
@@ -172,6 +221,7 @@ try {
   const discover = await (await mcp.POST(request('server/discover'))).json();
   assert.deepEqual(discover.result.supportedVersions,['2026-07-28']);
   console.log('PASS: quote arithmetic, field units, GBK record parsing, missing/zero prices, timestamps, stale quotes, symbol validation, partial failures, cache/refresh, gold baseline/fallback, MCP contracts');
+  console.log('PASS: Asian index mappings and sessions, null index books vs zero security books, temporal precision, isolated independent history, no cross-provider arithmetic');
   console.log('PASS: durable fallback with original timestamps, retry bounds, US sessions/holidays/DST/early close, Treasury publishing window, compact snapshots, isolated history, partial source failure');
   if (process.env.LIVE_DATA === '1') {
     cache.clearQuoteMemory();
@@ -183,6 +233,11 @@ try {
     assert(!quotes.quotes[0].name.includes('\ufffd'));
     assert.equal(goldQuote.fallback_used,false);
     assert(goldQuote.previous_close > 0);
+    const snap=await market.snapshot({refresh:true});
+    console.log(JSON.stringify({live_asian:snap.metrics.filter(m=>m.kind==='asian_equity').map(m=>({id:m.id,value:m.value,as_of:m.as_of,previous_date:m.previous_date,source:m.source,quality:m.quality,error:m.error,freshness:m.freshness}))}));
+    const histories=await Promise.all(['sp500','nasdaq','dow','sox','nikkei225','kospi'].map(async id=>{const h=await market.marketHistory(id,true);return {id,count:h.history?.length,metadata:h.history_metadata,error:h.history_error}}));
+    console.log(JSON.stringify({live_histories:histories}));
+    console.log(JSON.stringify({live_independent:await Promise.all(['sp500','nasdaq','dow','sox','nikkei225','kospi'].map(async id=>{try{const h=await indexSources.independentIndexHistory(id);return {id,source:h.history_source,date:h.market_date,count:h.history.length}}catch(error){return {id,error:upstream.dataIssue(error)}}}))}));
   }
 } finally {
   globalThis.fetch = realFetch;Date.now = realNow;
