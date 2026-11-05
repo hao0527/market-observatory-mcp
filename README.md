@@ -123,3 +123,5 @@ node scripts/check-public-source.mjs
 - [第三轮历史质量、来源与备用源验收报告](docs/ROUND3_QUALITY_REPORT.md)
 
 证券历史独立读取：支持日K及1/5/15/30/60分钟；1分钟仅开放不复权且近期窗口有限。`history_count`为当前页条数，完整已取得条数看`pagination.total_count`，覆盖完整性看`coverage`。`next_cursor`翻页，默认200条、最多500条。具体字段、复权缓存、已核实日历与限制见[证券历史契约](docs/SECURITY_HISTORY.md)。
+
+- [证券历史K线实现与真实验收报告](docs/SECURITY_HISTORY_REPORT.md)
