@@ -47,7 +47,7 @@ history_refresh_status独立为succeeded/failed/not_attempted。degraded=true仅
 
 ## 缓存、增量与分页
 
-复用现有D1 market_last_success和有限内存缓存，无新数据库schema；证券历史内存最多16块，避免扩大原报价缓存的内存占用。日K按自然季度，5/15/30/60分钟按自然周缓存；相邻/重叠日期请求复用已有块，仅获取缺少或过期的块。1分钟使用请求范围缓存，不建立完整分钟归档。请求最多两段并发，主源一次、备用最多两次，429不立即重试。
+复用现有D1 market_last_success和有限内存缓存，无新数据库schema；证券历史内存最多16块，避免扩大原报价缓存的内存占用。日K按自然季度，5/15/30/60分钟按自然周缓存；相邻/重叠日期请求复用已有块，仅获取缺少或过期的块。1分钟使用请求范围缓存，不建立完整分钟归档。请求最多两段并发；东方财富先查询原区间，遇可重试网络/超时/服务端故障时最多再查询一次beg=0的同源窗口，保持secid/klt/fqt及end不变，随后严格筛选日期。东方财富每次请求上限6.5秒；备用腾讯每次4.5秒、最多两次。401/403/429不做同源窗口重试，不绕过访问或限流。窗口可能仍受保留范围限制，不代表任意历史可用。
 
 当前段日K TTL60秒、分钟TTL15秒；已结束不复权段TTL6小时；已结束复权段TTL1小时。沿用最长14天最近成功故障缓存，不承诺永久历史存储。正在形成的记录不长期当作完整数据缓存。
 
@@ -87,3 +87,11 @@ node scripts/test-security-history-live.mjs
 主源失败但备用源新数据成功：history_refresh_status=succeeded、primary_refresh_status=failed、primary_refresh_error保留。备用缓存交付且本次主源失败：degraded=true、history_refresh_status=failed。缓存命中不等于上游成功。source_requests逐源记录尝试、交付、原采集时间、序列名及原始版本。source_transition只说明整段换源，不宣称复权口径一致。
 
 默认refresh=false会优先检查主源或备用源处于正常TTL且覆盖完整的成功缓存，不为读取已有备用缓存先触发主源失败。分页缓存可跨普通TTL读取同一指纹版本，但不跨14天成功保留期；普通首页缓存仍遵守正常TTL。
+
+## 1.5.2 同源区间恢复与留痕
+
+窗口恢复仅在原区间发生可重试故障时启用，空数组、错误身份或未核实复权不会触发它。超过10000行拒绝保存。主源同一供应商的有效窗口整段替换失败请求，不混合普通/复权数据；有少量记录仍按coverage标partial，不补造。
+
+source_requests.fetch_strategy为requested_range或provider_window；fetch_attempt_metadata保留这次成功抓取所经历的请求、策略、原失败和时间。读取缓存时，此字段属于原fetched_at的抓取证据，不表示本次刷新；本次状态仍看history_refresh_status、delivery、degraded。两次请求都失败时保留原区间错误，并在refresh_error.request_attempts列出两个实际失败；第二个窗口为空不证明原区间历史不受支持。旧缓存没有该证据时返回null，不虚构请求记录。
+
+同源窗口复用原D1键；不添加数据源、周期或指标，不修改Secrets。复权因子版本仍未取得，factor_version=null、point_in_time_supported=false。

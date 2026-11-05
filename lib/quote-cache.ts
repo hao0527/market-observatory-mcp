@@ -28,7 +28,7 @@ export async function loadQuote(key:string,loader:()=>Promise<any>,options:{refr
     if(options.cacheOnly)throw new DataError({code:'CURSOR_CACHE_MISS',message:'分页所需的成功缓存已不存在，请从第一页重新读取',retryable:true});
     try{
       const payload=await loader();
-      if(last&&options.acceptReplacement&&!options.acceptReplacement(last.payload,payload))throw new DataError({code:'INCOMPLETE_HISTORY_REFRESH',message:'本次历史刷新比缓存缺少已取得的记录，保留更完整缓存',retryable:true,source:payload.source,source_url:payload.source_url});
+      if(last&&options.acceptReplacement&&!options.acceptReplacement(last.payload,payload))throw new DataError({code:'INCOMPLETE_HISTORY_REFRESH',message:'本次历史刷新比缓存缺少已取得的记录，保留更完整缓存',retryable:true,source:payload.source,source_url:payload.source_url,...(payload.fetch_attempt_metadata?{request_attempts:payload.fetch_attempt_metadata}:{})});
       if(!Number.isFinite(payload.value)||payload.value<=0)throw new DataError({code:'INVALID_RESPONSE',message:'上游缺少有效最新值',retryable:false});
       const record:SavedQuote={key,payload,data_time:payload.as_of||payload.market_date||payload.fetched_at,fetched_at:payload.fetched_at||new Date().toISOString(),expires_at:new Date(Date.now()+retention).toISOString()};
       // Invalid/future timestamps must not replace the most recent good record.

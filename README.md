@@ -100,7 +100,7 @@ node scripts/check-public-source.mjs
 
 13 项全球指标。日韩报价优先 Yahoo，东方财富 / NAVER 提供同指数备用；日本已核实 2026–2027 日历及午休，韩国完整年度休市 / 特别时段尚未核实，明确返回不确定性。美股报价切换新浪后，按需历史可使用东方财富 / Nasdaq，FRED 备用。
 
-## 历史状态（Schema v1.5，服务 1.5.1）
+## 历史状态（Schema v1.5，服务 1.5.2）
 
 `quality` 保留为报价质量；历史必须单独读取 `history_quality`。`history_supported` 是支持路径的兼容能力别名，实际数据只看 `history_available` 和 `history_count`。空数组、失败或未请求不能被标为实际有历史。
 
@@ -129,3 +129,5 @@ node scripts/check-public-source.mjs
 1.5.1修复：证券历史优先东方财富、整段腾讯备用；备用缺少逐根成交额则amount=null、quality=partial。分页默认只读绑定提供方的成功缓存，不重新请求上游；复权序列未核实不冒充成功。主源错误保留真实HTTP状态及有限正文。详见证券历史契约。
 
 - [证券历史第二轮修复及ChatGPT线上MCP验收（1.5.1）](docs/SECURITY_HISTORY_REPAIR_REPORT.md)：含逐证券/周期结果、复权失败、上游新取与缓存的区分。
+
+1.5.2修复：东方财富区间查询发生可重试故障时，最多再读取一次同源保留窗口（beg=0，证券、周期、复权及结束日期不变），严格筛选日期并保留两次请求证据；不绕过401/403/429，也不把有限窗口当成完整历史。
