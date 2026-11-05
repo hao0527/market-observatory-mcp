@@ -131,3 +131,5 @@ node scripts/check-public-source.mjs
 - [证券历史第二轮修复及ChatGPT线上MCP验收（1.5.1）](docs/SECURITY_HISTORY_REPAIR_REPORT.md)：含逐证券/周期结果、复权失败、上游新取与缓存的区分。
 
 1.5.2修复：东方财富区间查询发生可重试故障时，最多再读取一次同源保留窗口（beg=0，证券、周期、复权及结束日期不变），严格筛选日期并保留两次请求证据；不绕过401/403/429，也不把有限窗口当成完整历史。
+
+- [1.5.2同源恢复、复权及真实Worker验收](docs/SECURITY_HISTORY_RECOVERY_REPORT.md)：主体17项查询中12项本次新取、1项缓存、4项仍不可用，单独记录4次线上同源窗口恢复。
