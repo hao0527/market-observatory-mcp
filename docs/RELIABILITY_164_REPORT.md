@@ -22,7 +22,7 @@
 - db/security-archive.ts：pendingJobs，从原任务表全量发现queued/到期重试任务，未到期及无法核实执行条件的任务不列为可执行。
 - lib/security-archive.ts：execution说明、全局backfill响应；原configure/sync行为及退避保持。
 - app/mcp/route.ts：Catalog时间契约、归档描述及服务1.6.4；工具参数与数量不变。
-- scripts/snapshot-metadata-cases.mjs：35组实际快照/D1缓存组合、混合刷新、全失败及空数据/未知质量测试。
+- scripts/snapshot-metadata-cases.mjs：35组snapshot函数/持久缓存适配器隔离测试、混合刷新、全失败及空数据/未知质量测试。
 - scripts/test-security-archive.mjs：新增9组实际SQLite查询/退避/旧作业恢复场景，合计30组。
 - scripts/volatility-cases.mjs：新增6组FRED隔离路径、准确序列头和日期滞后检查，合计100组。
 - scripts/test-market-data.mjs：接入新回归及LIVE_FRED_VXN真实隔离检查。
@@ -55,7 +55,41 @@ LIVE_FRED_VXN=1 npm test只在本地注入Yahoo/Cboe失败，FRED网络请求保
 
 ## 部署与线上验收
 
-待生产构建、Git合并、私有部署及真实MCP/服务API验证后补充。此处未将本地或隔离测试称为线上成功。
+生产构建及公开源码检查通过。2026-11-06 12:10:29 UTC（北京时间20:10:29）私有部署成功：Sites版本19，服务1.6.4，Schema1.5。精确部署源码提交0b3084b292a000d261e0e8cf1a0924f467f0f726；[PR #5](https://github.com/hao0527/market-observatory-mcp/pull/5)已合并，功能提交f698fac92c7fa5afb2148d7e9a8034fb581c08f5，合并提交5b7dc953827edb120b96ed6b76dad9884ee77687。未观察到独立GitHub Actions运行；测试由本次实际执行命令完成，不声称CI另行通过。
+
+### 原生ChatGPT MCP：快照与缓存
+
+20:11:11北京时间强制刷新：13/13返回有效数值，coverage.available=13，by_quality合计13；partial/unknown/other等计数显式为0。VIX=28.18、VXN=38.26，均为11/05的Cboe官方日线，日期一致性检查通过。
+
+首次快照时间：
+
+- generated_at / retrieved_at：2026-11-06T12:11:11.906Z。
+- fetched_at / latest_fetched_at：2026-11-06T12:11:11.737Z。
+- oldest_fetched_at：2026-11-06T12:11:10.690Z。
+
+20:11:56再次读取refresh=false：cache_hit=true，13项delivery全部durable_cache；顶层fetched_at、最早/最近采集时间及逐项fetched_at均与第一次完全相同，仅generated_at/retrieved_at变为2026-11-06T12:11:56.366Z。原问题的全缓存重标采集时间已不再复现。partial及未知质量的计数通过隔离测试验收，不人为破坏生产数据制造状态。
+
+### 真实补采：服务授权、写入与D1回读
+
+上线后先用原生MCP确认backfill发现旧1分钟作业，due_jobs=1、due_tasks=1、limit=40、truncated=false；采集配置与原值一致。再通过当前Sites返回的服务访问方式，仅向本站/api/security-archive发起GET、POST sync和回读，未将服务凭据用于/mcp，也未写入文件、日志或提示词。
+
+对原sh563360、2026-11-04、1m作业实际执行一次max_tasks=1、retry_missing=true：processed_this_call=1，attempts从2增到3，last_attempt_at=2026-11-06T12:12:19.091Z，作业于12:12:26.684Z更新。
+
+结果仍为partial、79/240根、缺161根，source=腾讯证券历史，refresh_status=failed、degraded=true。原成功fetched_at=2026-11-06T00:14:28.885Z保持不变。**这次真实请求的东方财富响应已能解码，但实际只返回11/06 09:31–15:00；腾讯实际窗口为11/05 13:42–11/06 15:00，两者均没有目标日缺失区间。**错误为HISTORY_RANGE_UNAVAILABLE/HISTORY_REFRESH_INCOMPLETE，不继续把这次请求写成HTTP520，也不把它认定为永久不支持或停牌。
+
+新next_retry_at=2026-11-06T12:16:26.450Z（北京时间20:16:26），仅表示最早可再试时间。刚执行后的backfill.pending_jobs=1、due_jobs=0，符合退避；不宣称安排了20:16自动执行。该阶段D1回读为11,650条按来源保存的K线、209份原始采集记录；本次新取得的有效窗口原始记录按现有规则保存，但没有越界交付为11/04历史或冒充该日补齐。配置未变化。21:06北京时间再次读取，D1仍为11,650行、原始采集记录212份；退避已过，backfill.due_jobs恢复为1，未把它描述为已经自动执行。
+
+### 分页、日线与其他回归
+
+21:05北京时间继续使用原生MCP完成11/04–11/06的1分钟分页：200+200+159=559，总数与pagination.total_count一致，559个唯一时间戳，全部升序、OHLC有效、is_final=true，三页snapshot_id完全相同。后两页为缓存只读，history_refresh_status=not_attempted、upstream_refresh_attempted=false。逐日条数仍为79/240/240，缺161根；整段均为腾讯，不与东方财富拼接。逐根amount仍为null且字段完整性独立说明。
+
+11/05–11/06日线为东方财富2根、quality=available，11/06收盘1.112，原采集时间2026-11-06T08:13:44.727Z保留；与最新证券行情1.112一致。上证指数盘口null/unsupported，sh563360及sz159842均有正常五档；sz159842源名称为券商ETF银华。黄金历史正常unsupported、count0、available=false；KOSPI保留NAVER历史22条、history_quality=unknown及calendar_verified=false，没有虚构完整日历。
+
+### 调度状态
+
+已更新原归档任务的执行指令：使用backfill.jobs发现所有到期任务，保留当日优先、原job_id续跑、最多40批及新退避约束；不再把recent_jobs当全部未完成作业清单。仅改prompt，工作日北京时间16:05计划、关联站点、启用/暂停状态均未改动。
+
+Sites与Automations再次回读确认：is_enabled=false、next_run_time=null；采集settings.enabled=true且原观察列表/周期/updated_at未变。暂停原因仍无法从可用字段核实，故未擅自恢复、未重复创建任务。服务端execution.scheduler_status=unknown是其核实能力边界，外部实际paused由平台记录单独确认。**自动归档当前没有启用，也没有下一次执行时间；本次手动真实补采成功执行不代表自动调度已恢复。**
 
 ## 执行边界
 
