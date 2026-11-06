@@ -163,6 +163,8 @@ async function readSecurityHistory(q:Query,provider:Provider,cacheProbe=false):P
   try{
    // Import previous successful raw responses without changing their original fetched_at.
    if(!cursor)for(const old of await store.legacy(q.symbol,q.period,source))if(old.raw){try{const p=provider==='eastmoney'?parseSecurityKlines(old.raw,q,old.fetched_at):parseTencentSecurityHistory(old.raw,q,old.fetched_at);await archiveResponse(q,source,old.source_url,q.start_date,end,old.fetched_at,p,old.raw,old.fetch_attempt_metadata??[])}catch{/* Legacy parsing cannot invent records. */}}
+  }catch(e){requests.push({source,delivery:'legacy_import',refresh_status:'not_attempted',archive_error:String(e).slice(0,300)})}
+  try{
    const archived=await store.readBars(q.symbol,q.period,source,q.start_date,end);
    if(archived.bars.length){archiveComplete=securityCoverage(q,archived.bars,now).range_complete===true;loaded.push({name:archived.name,bars:archived.bars,fetched_at:archived.bars.map(b=>b.fetched_at).sort()[0],delivery:'durable_archive',degraded:false,warnings:[],rejected:0});requests.push({source,start_date:q.start_date,end_date:end,delivery:'durable_archive',refresh_status:'not_attempted',fetched_at:loaded[0].fetched_at,retrieved_at:new Date(now).toISOString()});}
   }catch(e){requests.push({source,delivery:'durable_archive',refresh_status:'not_attempted',archive_error:String(e).slice(0,300)})}

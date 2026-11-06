@@ -77,3 +77,8 @@
 增加`/api/security-archive`，由同一owner-private平台边界验证服务访问；GET读取状态（可传job_id/fetch_id），POST `{"operation":"sync","arguments":{...}}`或`{"operation":"configure","arguments":{...}}`复用完全相同的归档函数。已有MCP工具保持独立OAuth。此入口不伪造visitor identity，不连接其他应用。
 
 在线脚本archive/read模式使用该服务API；matrix模式使用MCP OAuth `oauth_token`，或由ChatGPT原生MCP调用完成。未经OAuth的/mcp返回401是正确的权限边界，不能误报为业务参数或数据源故障。未来云任务若新工具尚未加载，可从get_site即时获取现有服务访问凭据，仅发给本站API；不可把凭据写进提示词、源码或报告。
+
+
+### D1归档读取兼容修复（1.6.2）
+
+线上D1对较长LIKE/GLOB模式报`LIKE or GLOB pattern too complex`。旧缓存键前缀改用主键的上下界范围查询；不再使用LIKE。旧缓存导入是可选路径，其失败单独记录legacy_import错误，始终继续读取正式归档，不影响已持久化数据可读性。已归档数据和原采集时间均保留。增加真实SQLite的长中文前缀检索、可选旧缓存导入异常隔离回归；最终以生产D1的归档分页回读确认。
