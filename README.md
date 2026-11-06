@@ -145,3 +145,5 @@ node scripts/check-public-source.mjs
 证券历史归档（服务1.6.0，Schema1.5兼容扩展）：新增可配置观察列表、持久化原始采集和已完成none K线、分日补采作业。主源不完整时也尝试完整备用区间，始终选单一提供方。详情见[归档契约](docs/SECURITY_ARCHIVE.md)。新增`configure_security_archive`、`sync_security_history`、`get_security_archive_status`，原有五工具保持职责。按现有Sites流程应用新增Drizzle迁移；部署后实际执行writer/readback，再创建云调度。调度是每个部署独立的账号资源，不会随克隆代码自动运行。不要复制作者任务或凭据。
 
 1.6.1补充无人值守入口：站点服务访问用于私有`/api/security-archive`执行与回读，MCP仍走其独立OAuth；不混用权限、不改Secrets。详情见归档契约。
+
+[1.6.2生产归档与原生MCP完整验收](docs/SECURITY_ARCHIVE_REPORT.md)：含真实查询矩阵、20项归档、6页持久分页、价格/量额对账、剩余缺口与自动任务状态。
