@@ -63,7 +63,32 @@ LIVE_VOLATILITY=1 npm test 在2026-11-06 01:47–01:50 UTC真实请求：
 
 ## 线上状态
 
-待提交后的私有部署与真实MCP验收；未将本地成功冒充线上成功。
+生产构建成功；2026-11-06 01:55:18 UTC部署成功，Sites版本18，服务1.6.3，Schema1.5，仍为所有者私有。未修改Secrets、数据库迁移、既有归档/盘前定时任务或访问范围。
+
+Git功能提交：`a249286d4b5cbdbcb7f7bc7bdbf6061a5f73f3b3`；[PR #4](https://github.com/hao0527/market-observatory-mcp/pull/4)已合并，合并提交`14cc6eb50261e6e545ae63b423eb69cbf14cd8d9`。Sites精确构建源码提交：`d9a29f50c3ee3241051f2295373545e229132f4f`。公开仓库与私有部署分开保留Git来源，不公开站点身份或凭据。GitHub本次未返回PR工作流运行，验证由本次执行的实际命令完成，不声称CI另行通过。
+
+### ChatGPT原生MCP验收
+
+2026-11-06 01:55:52 UTC（北京时间09:55:52）实际调用get_market_snapshot(refresh=true)：13/13有有效数值，12项available、VIX一项partial，0项stale/unavailable。没有把有值等同于全部已完成官方核验。
+
+| 指标 | 市场日期 | 线上quality | 来源 |
+| --- | --- | --- | --- |
+| VIX | 2026-11-05 | partial | Investing.com非CFD CBOE指数日线 |
+| VXN | 2026-11-05 | available | Cboe CSV |
+| 美国2Y/10Y/30Y | 2026-11-05 | available（各项） | U.S. Treasury |
+| 黄金、布伦特 | 2026-11-06 | available（各项） | 原有新浪来源；布伦特仍明确CFD |
+| 标普500、纳指综合、道指、SOX | 2026-11-05 | available（各项） | 原有新浪来源 |
+| 日经225、KOSPI | 2026-11-06 | available（各项） | 原有东方财富、NAVER |
+
+VIX=28.18，前收16.61（11/04），日变化+69.65683323%；VXN=38.26，前收25.08（11/04）。volatility_date_consistency=aligned_latest_completed、consistent=true，expected_last_completed_date=11/05。
+
+线上当次Yahoo仍429，Cboe VIX CSV仍止于11/04；新增独立日线成功获取11/05。Cboe观测的last_trade_time仍为11/05 16:15:01，close=28.18，但prev_day_close已滚动成28.18（与真实11/04前收16.61不符），因此checks.previous_close=false、official_close_window_confirmed=false，保持quote partial、official_daily_file_confirmed=false。没有用这个已滚动前收计算日变化，也没有修改或插入历史。
+
+01:56:31–33 UTC进一步实际调用两个get_market_history(refresh=true)：各22条，从10/07至11/05，history_quality=available、history_refresh_status=succeeded；VIX报价quality仍partial，历史新鲜度不替代报价验证。两者本次quote_source与history_source一致、cross_provider=false；VIX整段来自Investing，VXN整段来自Cboe，未追加观测记录。
+
+01:57:05 UTC再调用VIX refresh=false，delivery=durable_cache；原fetched_at=01:56:32.367Z不变，retrieved_at变为01:57:05.075Z；history_refresh_status=not_attempted、history_degraded=false。真实D1缓存回读通过，没有把缓存读取当作上游刷新。
+
+同轮原生MCP回归：黄金history=unsupported/count0/available=false，正常业务结果；上证指数sh000001盘口null/unsupported，sh563360 ETF正常五档买卖盘，均有有效报价。缓存上游失败/重启/过期及旧记录替换保护通过隔离测试完成，没有破坏生产上游来制造失败。
 
 ## 限制
 
@@ -71,3 +96,10 @@ LIVE_VOLATILITY=1 npm test 在2026-11-06 01:47–01:50 UTC真实请求：
 - 最新日期与官方文件确认是不同维度：provider_daily_index_close不能改名为official_daily_index_close。仅独立日线可读且官方观测失败时，quote partial、history按日期表达。
 - 公开数据下载/页面结构可能变化；身份校验失败时宁可不可用，不绕过登录、反机器人或限流。
 - 不扩充日历覆盖，不推测临时休市；无需新增架构，后续只有实质性数据错误再修。
+
+## 参考
+
+- Cboe方法说明：https://cdn.cboe.com/api/global/us_indices/governance/VIX_Methodology.pdf
+- 官方日线：https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv
+- 非CFD独立日线：https://www.investing.com/indices/volatility-s-p-500-historical-data?cid=1096487
+- FRED序列：https://fred.stlouisfed.org/series/VXNCLS （此次下载本地503、生产520，仍未通过真实读取成功验收）
