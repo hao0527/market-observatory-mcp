@@ -7,6 +7,7 @@ import {pathToFileURL} from 'node:url';
 import ts from 'typescript';
 import {testHistoryQuality} from './history-quality-cases.mjs';
 import {testSecurityHistory} from './security-history-cases.mjs';
+import {testVolatility} from './volatility-cases.mjs';
 const dir = await mkdtemp(join(tmpdir(), 'asset-data-test-'));
 const realFetch = globalThis.fetch;
 const realNow = Date.now;
@@ -24,10 +25,11 @@ try {
     ['lib/tencent.ts', 'tencent.mjs', {'./upstream':'./upstream.mjs','./quote-cache':'./quote-cache.mjs','./freshness':'./freshness.mjs','./time-metadata':'./time-metadata.mjs'}],
     ['lib/gold.ts', 'gold.mjs', {'./tencent':'./tencent.mjs','./upstream':'./upstream.mjs'}],
     ['lib/backup-sources.ts','backup-sources.mjs',{'./upstream':'./upstream.mjs','./tencent':'./tencent.mjs'}],
-    ['lib/history.ts','history.mjs',{'./index-sources':'./index-sources.mjs','./backup-sources':'./backup-sources.mjs','./freshness':'./freshness.mjs','./time-metadata':'./time-metadata.mjs','./quote-cache':'./quote-cache.mjs','./upstream':'./upstream.mjs'}],
-    ['lib/market.ts', 'market.mjs', {'./history':'./history.mjs','./index-sources':'./index-sources.mjs','./time-metadata':'./time-metadata.mjs','./backup-sources':'./backup-sources.mjs','./gold':'./gold.mjs','./upstream':'./upstream.mjs','./quote-cache':'./quote-cache.mjs','./freshness':'./freshness.mjs'}],
+    ['lib/history.ts','history.mjs',{'./volatility':'./volatility.mjs','./index-sources':'./index-sources.mjs','./backup-sources':'./backup-sources.mjs','./freshness':'./freshness.mjs','./time-metadata':'./time-metadata.mjs','./quote-cache':'./quote-cache.mjs','./upstream':'./upstream.mjs'}],
+    ['lib/volatility.ts','volatility.mjs',{'./upstream':'./upstream.mjs','./backup-sources':'./backup-sources.mjs','./index-sources':'./index-sources.mjs','./freshness':'./freshness.mjs'}],
+    ['lib/market.ts', 'market.mjs', {'./volatility':'./volatility.mjs','./history':'./history.mjs','./index-sources':'./index-sources.mjs','./time-metadata':'./time-metadata.mjs','./backup-sources':'./backup-sources.mjs','./gold':'./gold.mjs','./upstream':'./upstream.mjs','./quote-cache':'./quote-cache.mjs','./freshness':'./freshness.mjs'}],
     ['app/api/history/route.ts','api-history.mjs',{'@/lib/market':'./market.mjs','@/lib/upstream':'./upstream.mjs'}],
-    ['app/mcp/route.ts', 'mcp.mjs', {'@/lib/security-archive':'./security-archive.mjs','@/lib/security-history':'./security-history.mjs','@/lib/market':'./market.mjs','@/lib/tencent':'./tencent.mjs','@/lib/freshness':'./freshness.mjs','@/lib/history':'./history.mjs','@/lib/upstream':'./upstream.mjs'}],
+    ['app/mcp/route.ts', 'mcp.mjs', {'@/lib/volatility':'./volatility.mjs','@/lib/security-archive':'./security-archive.mjs','@/lib/security-history':'./security-history.mjs','@/lib/market':'./market.mjs','@/lib/tencent':'./tencent.mjs','@/lib/freshness':'./freshness.mjs','@/lib/history':'./history.mjs','@/lib/upstream':'./upstream.mjs'}],
   ]) {
     let code = ts.transpileModule(await readFile(input, 'utf8'), {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
     for (const [from,to] of Object.entries(imports)) code = code.replaceAll(`'${from}'`, `'${to}'`).replaceAll(`"${from}"`, `"${to}"`);
@@ -43,6 +45,7 @@ try {
   const timeMeta=await import(pathToFileURL(join(dir,'time-metadata.mjs')));
   const historyQuality=await import(pathToFileURL(join(dir,'history.mjs')));
   const market = await import(pathToFileURL(join(dir,'market.mjs')));
+  const volatility = await import(pathToFileURL(join(dir,'volatility.mjs')));
   const upstream = await import(pathToFileURL(join(dir,'upstream.mjs')));
   const historyApi=await import(pathToFileURL(join(dir,'api-history.mjs')));
   const mcp = await import(pathToFileURL(join(dir,'mcp.mjs')));
@@ -243,6 +246,19 @@ try {
   console.log('PASS: Asian index mappings and sessions, null index books vs zero security books, temporal precision, isolated independent history, no cross-provider arithmetic');
   console.log('PASS: durable fallback with original timestamps, retry bounds, US sessions/holidays/DST/early close, Treasury publishing window, compact snapshots, isolated history, partial source failure');
   await testSecurityHistory({securityHistory,calendar:securityCalendar,cache,mcp,upstream});
+  await testVolatility({volatility,market,historyQuality,cache,mcp});
+  if(process.env.LIVE_VOLATILITY==='1'){
+    globalThis.fetch=realFetch;Date.now=realNow;cache.clearQuoteMemory();
+    const live=[];
+    for(const id of ['vix','vxn']){
+      const h=await market.marketHistory(id,true);
+      const row={id,value:h.value,previous_close:h.previous_close,previous_date:h.previous_date,change_percent:h.change_percent,market_date:h.market_date,expected_date:h.expected_last_completed_date,source:h.source,source_url:h.source_url,quality:h.quote_quality,history_quality:h.history_quality,history_count:h.history_count,fetched_at:h.fetched_at,retrieved_at:h.retrieved_at,daily_close_validation:h.daily_close_validation,source_attempts:h.source_attempts};
+      live.push(row);console.log(JSON.stringify({live_volatility:row}));
+      assert.equal(h.history_available,h.history_count>0);assert.equal(h.market_date,h.expected_last_completed_date);assert(h.history_count>1);
+      assert.equal(h.quote_kind,'daily_index_close');assert.equal(h.as_of,null);
+    }
+    assert.equal(live[0].market_date,live[1].market_date);
+  }
   if(process.env.LIVE_FALLBACKS==='1'){
     globalThis.fetch=async(url,options)=>url.includes('push2his.eastmoney.com')||url.includes('api.nasdaq.com')?new Response('',{status:503}):realFetch(url,options);Date.now=realNow;cache.clearQuoteMemory();
     const results=await Promise.all(['sp500','nasdaq','dow','sox','nikkei225','kospi'].map(async id=>{const h=await historyQuality.resolveHistory({...market.catalog.find(m=>m.id===id),instrument_id:id,quality:null,source:null,quote_requested:false,history:[]},true);assert.equal(h.history_available,h.history_count>0);if(h.history_available){assert.equal(h.history_refresh_status,'succeeded');assert.equal(h.history_source,id in indexSources.fredSeries?'FRED':'NAVER Finance')}return {id,result:h.history_available?'records':'unavailable',source:h.history_source,series:h.history_metadata.series,count:h.history_count,first_date:h.history[0]?.date,date:h.history_market_date,quality:h.history_quality,refresh_status:h.history_refresh_status,fetched_at:h.history_fetched_at,retrieved_at:h.history_retrieved_at,attempts:h.history_metadata.source_attempts,error:h.history_refresh_error}}));

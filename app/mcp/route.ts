@@ -3,6 +3,7 @@ import {getSecurityQuotes, securityQueryInfo} from '@/lib/tencent';
 import {calendarPolicy} from '@/lib/freshness';
 import {historyContract} from '@/lib/history';
 import {dataIssue} from '@/lib/upstream';
+import {volatilityContract} from '@/lib/volatility';
 import {getSecurityHistory,securityHistoryInfo} from '@/lib/security-history';
 import {configureSecurityArchive,syncSecurityHistory,getSecurityArchiveStatus,securityArchiveInfo} from '@/lib/security-archive';
 
@@ -56,7 +57,7 @@ export const mcpTools = [
 export async function callMarketTool(name: string, args: any = {}) {
   if (name === 'get_market_snapshot') return snapshot({refresh:args.refresh===true,include_history:args.include_history===true,include_raw:args.include_raw===true});
   if (name === 'get_market_catalog') return {
-    schema_version:'1.5', catalog, history_contract:historyContract, backup_sources:{volatility:'Cboe官方日终值（非盘中）',us_indices:'新浪同一指数报价；历史按需使用独立东方财富/Nasdaq序列，FRED备用',asian_indices:'Yahoo指数；东方财富 / NAVER同一指数备用报价；东方财富/NAVER独立历史',brent:'新浪CFD备用报价，instrument_changed=true；不可拼接相同合约历史'}, security_quotes:securityQueryInfo, security_history:securityHistoryInfo, security_archive:securityArchiveInfo, freshness_policy:calendarPolicy, cache_policy:{normal_ttl_seconds:60,security_ttl_seconds:5,last_success_retention_days:14,storage:'D1 durable + bounded memory',degraded:'上游失败时返回最近成功数据，保留原fetched_at和行情时间；retrieved_at为本次返回时间'},
+    schema_version:'1.5', catalog, volatility_contract:volatilityContract, history_contract:historyContract, backup_sources:{volatility:'Cboe日线；VIX可用Investing非CFD CBOE指数日线，逐日交叉核验；Cboe收盘观测只作验证，不拼入历史；VXN有FRED VXNCLS备用，发布滞后仍标stale',us_indices:'新浪同一指数报价；历史按需使用独立东方财富/Nasdaq序列，FRED备用',asian_indices:'Yahoo指数；东方财富 / NAVER同一指数备用报价；东方财富/NAVER独立历史',brent:'新浪CFD备用报价，instrument_changed=true；不可拼接相同合约历史'}, security_quotes:securityQueryInfo, security_history:securityHistoryInfo, security_archive:securityArchiveInfo, freshness_policy:calendarPolicy, cache_policy:{normal_ttl_seconds:60,security_ttl_seconds:5,last_success_retention_days:14,storage:'D1 durable + bounded memory',degraded:'上游失败时返回最近成功数据，保留原fetched_at和行情时间；retrieved_at为本次返回时间'},
     gold: {primary:'新浪财经/汇通网伦敦金现货CFD', change_basis:'同源昨结参考价', fallback:'Gold API现货；无同源前值则不计算涨跌', previous_date:'上游未提供，不推测'},
     notes:['quality为quote_quality兼容别名；历史状态必须读取history_quality。','布伦特主源为BZ=F近月连续期货，备用为新浪CFD，二者不是已核实同一合约；美债为官方日终par yield。','全球指标历史沿用近期窗口；证券历史由get_security_history按区间获取；sync_security_history只归档可配置观察列表，不是全市场采集。','缺失/过期项必须在分析中明示，不能补造数值。'],
   };
@@ -77,7 +78,7 @@ export async function POST(req: Request) {
   if (id === undefined) return new Response(null, {status:202});
   let result: any;
   if (method === 'server/discover') result = {supportedVersions:['2026-07-28'], capabilities:{tools:{}}};
-  else if (method === 'initialize') result = {protocolVersion:params?.protocolVersion || '2026-07-28', serverInfo:{name:'asset-observatory', version:'1.6.2'}, capabilities:{tools:{}}};
+  else if (method === 'initialize') result = {protocolVersion:params?.protocolVersion || '2026-07-28', serverInfo:{name:'asset-observatory', version:'1.6.3'}, capabilities:{tools:{}}};
   else if (method === 'ping') result = {};
   else if (method === 'tools/list') result = {tools:mcpTools};
   else if (method === 'tools/call') {

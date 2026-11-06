@@ -6,6 +6,7 @@ import {goldQuote} from './gold';
 import {fetchText,fetchJson,dataIssue,DataError} from './upstream';
 import {loadQuote} from './quote-cache';
 import {qualifyQuote} from './freshness';
+import {volatilityDaily,qualifyVolatility,volatilityDateConsistency} from './volatility';
 export const catalog=[
  {id:'vix',name:'VIX',group:'波动率',symbol:'^VIX',unit:'点',kind:'equity'},
  {id:'vxn',name:'VXN',group:'波动率',symbol:'^VXN',unit:'点',kind:'equity'},
@@ -56,7 +57,8 @@ async function treasuryText(){
 function metricLoader(item:Metric,sharedTreasury:()=>Promise<Awaited<ReturnType<typeof treasuryText>>>,sinaShared?:()=>Promise<string>,asianShared?:()=>Promise<any>) {
  return async()=>{
   let result:any;
-  if(item.kind==='treasury'){
+  if(item.id==='vix'||item.id==='vxn')result=await volatilityDaily(item.id);
+  else if(item.kind==='treasury'){
    const t=await sharedTreasury(),history=treasuryHistory(t.text,item.symbol),last=history.at(-1),previous=history.at(-2);if(!last)throw new DataError({code:'INVALID_RESPONSE',message:'无有效收益率',retryable:false,source_url:t.url});
    result={value:last.value,as_of:null,market_date:last.date,source_timezone:'America/New_York',previous_close:previous?.value??null,previous_date:previous?.date??null,change:previous?(last.value-previous.value)*100:null,change_percent:null,change_unit:'bp',change_basis:'same_provider_previous_daily_yield',change_reference:{kind:'previous_daily_yield',value:previous?.value??null,date:previous?.date??null},history:history.slice(-22),source:'U.S. Treasury',source_url:t.url,data_type:'official_daily_par_yield',quote_kind:'daily_par_yield',instrument_id:item.id,delay:'日终公布；非盘中成交收益率',fetch_attempts:t.attempts};
   }else if(item.id==='gold')result=await goldQuote();
@@ -73,7 +75,7 @@ function metricLoader(item:Metric,sharedTreasury:()=>Promise<Awaited<ReturnType<
     }
    }catch(error){result=item.kind==='asian_equity'?{...parseAsianIndex(await(asianShared?asianShared():fetchAsianBatch()),item.id),fallback_used:true,primary_error:dataIssue(error)}:await backupQuote(item.id,dataIssue(error),sinaShared)}
   }
-  return {...item,...result,fetched_at:new Date().toISOString()};
+  return {...item,...result,fetched_at:(item.id==='vix'||item.id==='vxn')?result.fetched_at:new Date().toISOString()};
  };
 }
 export function presentMetric(metric:any,includeHistory=false,includeRaw=false){
@@ -83,7 +85,7 @@ export function presentMetric(metric:any,includeHistory=false,includeRaw=false){
  return result;
 }
 async function getMetric(item:Metric,refresh:boolean,shared:()=>Promise<Awaited<ReturnType<typeof treasuryText>>>,sinaShared?:()=>Promise<string>,asianShared?:()=>Promise<any>){
- try{return temporalMetadata(qualifyQuote(await loadQuote('global:'+item.id,metricLoader(item,shared,sinaShared,asianShared),{refresh}),item.kind))}
+ try{const vol=item.id==='vix'||item.id==='vxn';const saved=await loadQuote(vol?'global-daily-close-v1:'+item.id:'global:'+item.id,metricLoader(item,shared,sinaShared,asianShared),{refresh,...(vol?{cacheFresh:(p:any,age:number)=>p.daily_close_contract_version===1&&age<60000,acceptReplacement:(p:any,n:any)=>!(p.quote_kind==='daily_index_close'&&p.market_date>n.market_date)}:{})});const q=qualifyQuote(saved,item.kind);return temporalMetadata(vol?qualifyVolatility(q):q)}
  catch(error){const issue=dataIssue(error);return temporalMetadata({...item,value:null,change:null,change_percent:null,quality:'unavailable',error:issue.message,upstream_error:issue,fetched_at:null,retrieved_at:new Date().toISOString(),history:[],history_supported:false,stale:false})}
 }
 export async function snapshot(input:boolean|SnapshotOptions=false){
@@ -93,7 +95,7 @@ export async function snapshot(input:boolean|SnapshotOptions=false){
  let asian:Promise<any>|undefined;const asianShared=()=>asian??=fetchAsianBatch();
  let metrics=await Promise.all(catalog.map(item=>getMetric(item,options.refresh===true,shared,sinaShared,asianShared)));
  if(options.include_history)metrics=await Promise.all(metrics.map(m=>resolveHistory(m,options.refresh===true)));
- return {schema_version:'1.5',retrieved_at:new Date().toISOString(),fetched_at:new Date().toISOString(),cache_hit:metrics.every(m=>'delivery'in m&&m.delivery!=='upstream'),report_timezone:'Asia/Shanghai',metrics:metrics.map(m=>presentMetric(m,options.include_history,options.include_raw)),coverage:{available:metrics.filter(m=>m.quality==='available').length,degraded:metrics.filter(m=>m.quality==='degraded').length,stale:metrics.filter(m=>m.quality==='stale').length,unavailable:metrics.filter(m=>m.quality==='unavailable').length,total:catalog.length},notes:['逐项fetched_at为上游成功读取时间；retrieved_at为本次工具返回时间。','degraded表示上游失败后返回最近成功数据，不能当作新报价。','默认不附带历史及原始字段；历史通过get_market_history按需读取。','黄金及布油备用源instrument_changed=true时不可拼接为同一品种/合约历史；VIX/VXN备用源为日终值。']};
+ return {schema_version:'1.5',retrieved_at:new Date().toISOString(),fetched_at:new Date().toISOString(),cache_hit:metrics.every(m=>'delivery'in m&&m.delivery!=='upstream'),report_timezone:'Asia/Shanghai',volatility_date_consistency:volatilityDateConsistency(metrics),metrics:metrics.map(m=>presentMetric(m,options.include_history,options.include_raw)),coverage:{available:metrics.filter(m=>m.quality==='available').length,degraded:metrics.filter(m=>m.quality==='degraded').length,stale:metrics.filter(m=>m.quality==='stale').length,unavailable:metrics.filter(m=>m.quality==='unavailable').length,total:catalog.length},notes:['逐项fetched_at为上游成功读取时间；retrieved_at为本次工具返回时间。','degraded表示上游失败后返回最近成功数据，不能当作新报价。','默认不附带历史及原始字段；历史通过get_market_history按需读取。','黄金及布油备用源instrument_changed=true时不可拼接为同一品种/合约历史；VIX/VXN备用源为日终值。']};
 }
 export async function marketHistory(id:string,refresh=false){
  const item=catalog.find(m=>m.id===id);if(!item)throw new DataError({code:'INVALID_ARGUMENT',message:'未知指标',retryable:false});
