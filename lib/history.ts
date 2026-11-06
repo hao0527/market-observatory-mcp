@@ -1,5 +1,5 @@
 import {asianIndices,fredSeries,independentIndexHistory} from './index-sources';
-import {backupQuote} from './backup-sources';
+import {volatilityDaily,volatilitySession} from './volatility';
 import {historyFreshness,historyTradingDay} from './freshness';
 import {marketTimezone} from './time-metadata';
 import {loadQuote} from './quote-cache';
@@ -46,7 +46,8 @@ export function historyState(metric:any,requested=false){
  const ownSource=Object.hasOwn(old,'source')?old.source:metric.source??null;
  const last=points.at(-1)?.date??null;
  const context={market_timezone:marketTimezone(metric),market_date:last,fetched_at:old.fetched_at??metric.fetched_at,data_type:old.data_type??metric.data_type,bar_observed_at:old.bar_observed_at??(!old.source?metric.as_of:null),provider_session:old.provider_session??metric.provider_session,market_status:old.market_status??metric.market_status,quote_market_date:old.quote_market_date??metric.market_date,quote_previous_date:old.quote_previous_date??metric.previous_date};
- const calculated=historyFreshness(context,metric.kind);
+ let calculated=historyFreshness(context,metric.kind);
+ if((metric.id==='vix'||metric.id==='vxn')&&metric.daily_close_contract_version===1&&last){const s=volatilitySession(),expected=s.expected_last_completed_date,stale=!!expected&&last<expected;calculated={...calculated,...s,expected_date:expected,expected_date_semantics:'alias_of_expected_last_completed_date',stale,bar_status:'completed',status:stale?'stale':expected&&last===expected?'latest_completed_session':'unknown',reason:stale?'波动率日线落后于应有完整交易日':'按波动率独立收盘时段判断，日线与盘中价隔离'}}
  const fresh=capabilities.history_supported?calculated:{...calculated,bar_status:'unsupported',status:'unsupported',reason:'当前品种没有已实现的可比历史通道'};
  const quoteSource=metric.source??null;
  const inline=!Object.hasOwn(old,'source')||old.source===quoteSource;
@@ -79,15 +80,15 @@ export async function resolveHistory(metric:any,refresh:boolean){
  const capabilities=historyCapabilities(metric);
  if(!capabilities.history_supported)return historyState({...metric,history:[]},true);
  const inline=records(metric);
- if(inline.length)return historyState({...metric,history:inline,history_metadata:{source:metric.source,source_url:metric.source_url,instrument_id:metric.instrument_id,market_date:inline.at(-1)?.date,source_timezone:metric.source_timezone,fetched_at:metric.fetched_at,retrieved_at:metric.retrieved_at,delivery:metric.delivery,cache_backend:metric.cache_backend,cache_warning:metric.cache_warning,degraded:metric.degraded,upstream_error:metric.degraded?metric.upstream_error:null,bar_observed_at:metric.as_of}},true);
+ if(inline.length)return historyState({...metric,history:inline,history_metadata:{source:metric.source,source_url:metric.source_url,instrument_id:metric.instrument_id,market_date:inline.at(-1)?.date,source_timezone:metric.source_timezone,fetched_at:metric.fetched_at,retrieved_at:metric.retrieved_at,delivery:metric.delivery,cache_backend:metric.cache_backend,cache_warning:metric.cache_warning,degraded:metric.degraded,upstream_error:metric.degraded?metric.upstream_error:null,bar_observed_at:metric.as_of,daily_close_validation:metric.daily_close_validation,source_attempts:metric.source_attempts}},true);
  if(!capabilities.independent_history_supported)return historyState({...metric,history:[],history_error:metric.upstream_error??emptyError()},true);
  try{
   const h=await loadQuote('index-history:'+metric.id,async()=>{
-   if(metric.id==='vix'||metric.id==='vxn'){const data=await backupQuote(metric.id,{code:'HISTORY_SOURCE',message:'独立历史读取',retryable:false});return {...data,history_source:data.source,history_source_url:data.source_url,history_series:metric.id.toUpperCase(),fetched_at:new Date().toISOString()}}
+   if(metric.id==='vix'||metric.id==='vxn'){const data=await volatilityDaily(metric.id,true);return {...data,history_source:data.source,history_source_url:data.source_url,history_series:metric.id.toUpperCase()}}
    return independentIndexHistory(metric.id);
   },{refresh,ttlMs:300000});
   if(h.instrument_id!==metric.id)throw new DataError({code:'INSTRUMENT_MISMATCH',message:'历史与当前报价不是已核实的同一品种',retryable:false,source_url:h.history_source_url});
-  const metadata={source:h.history_source,source_url:h.history_source_url,series:h.history_series,instrument_id:h.instrument_id,source_timezone:h.source_timezone,market_date:h.market_date,fetched_at:h.fetched_at,retrieved_at:h.retrieved_at,delivery:h.delivery,cache_backend:h.cache_backend,cache_warning:h.cache_warning,degraded:h.degraded,upstream_error:h.upstream_error,primary_error:h.history_primary_error,source_attempts:h.history_source_attempts,publication_note:h.publication_note,market_status:h.market_status,quote_market_date:h.quote_market_date,provider_session:h.provider_session,data_type:h.data_type,same_instrument:true,cross_provider:metric.source!==h.history_source,note:'整段历史来自此来源；不追加最新报价，不改变其昨收、参考日期和日变化'};
-  return historyState({...metric,history:h.history,history_metadata:metadata,history_error:h.degraded?h.upstream_error:null,raw_history_fields:h.raw_history_fields},true);
+  const metadata={source:h.history_source,source_url:h.history_source_url,series:h.history_series,instrument_id:h.instrument_id,source_timezone:h.source_timezone,market_date:h.market_date,fetched_at:h.fetched_at,retrieved_at:h.retrieved_at,delivery:h.delivery,cache_backend:h.cache_backend,cache_warning:h.cache_warning,degraded:h.degraded,upstream_error:h.upstream_error,primary_error:h.history_primary_error,source_attempts:h.source_attempts??h.history_source_attempts,daily_close_validation:h.daily_close_validation,publication_note:h.publication_note,market_status:h.market_status,quote_market_date:h.quote_market_date,provider_session:h.provider_session,data_type:h.data_type,same_instrument:true,cross_provider:metric.source!==h.history_source,note:'整段历史来自此来源；不追加最新报价，不改变其昨收、参考日期和日变化'};
+  return historyState({...metric,history:h.history,...(h.daily_close_contract_version?{daily_close_contract_version:h.daily_close_contract_version}:{}),history_metadata:metadata,history_error:h.degraded?h.upstream_error:null,raw_history_fields:h.raw_history_fields},true);
  }catch(error){return historyState({...metric,history:[],history_error:dataIssue(error),history_metadata:{source:null,source_url:null,source_attempts:(dataIssue(error).causes??[dataIssue(error)]).map(e=>({source:e.source,status:'failed',source_url:e.source_url,error:e}))}},true)}
 }

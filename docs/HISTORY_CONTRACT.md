@@ -74,7 +74,8 @@ history_available = history_count > 0
 | sox | Nasdaq SOX（价格指数） | FRED NASDAQSOX |
 | nikkei225 | 东方财富 100.N225 | NAVER .N225 |
 | kospi | 东方财富 100.KS11 | NAVER KOSPI |
-| vix / vxn | 随报价取得的同源历史 | Cboe 官方日终 CSV |
+| vix | 比较 Yahoo 已完成日线、Cboe CSV 和 Investing 非CFD CBOE指数日线，返回单源整段 | Cboe收盘观测仅核验，不作为历史 |
+| vxn | 比较 Yahoo已完成日线、Cboe CSV及FRED VXNCLS | FRED存在发布滞后，旧日期仍stale |
 | us2y / us10y / us30y | 美国财政部官方日终 par yield | 无新增来源 |
 
 `quote_source` 与 `history_source` 都指本次响应使用的实际供应商。`cross_provider` 在两者已知时严格按是否不同计算，来源无法核实为 null；`same_instrument` 独立按品种标识判断，有记录但未知供应商不伪称同源。同一指数不代表供应商、时点或报价口径相同。历史 note 由实际来源统一生成，纠正旧缓存中的冲突备注。
@@ -112,3 +113,13 @@ Catalog 使用“布伦特原油参考报价”：主源 BZ=F 为近月连续期
 保留四个已核实序列与无密钥 CSV 路径，不新增 Secrets。隔离测试仅在测试进程内模拟东方财富 / Nasdaq 主源 HTTP 503，再走真实 loadQuote → FRED → parser → historyState 路径，不修改生产源。合成 CSV 用于确定性测试，真实网络检查单独记录，绝不混用。
 
 开发环境对 SP500 原 URL、增加 Accept / User-Agent / Referer 和旧 /series/SP500/downloaddata/SP500.csv 路径的请求均返回 HTTP 503，server=envoy，响应为 upstream connect error or disconnect/reset before headers（remote reset）。这只能确认当前请求路径连接失败，不能把错误归因于序列、参数或 FRED 官方服务本身。官方标准 observations API 需要注册 API key，本轮不擅自添加凭据或引入第三方代理。实际备用路径结果及线上验收见第三轮报告。
+
+## 波动率日线（服务 1.6.3）
+
+仅采用已完成交易日的 daily close。常规 VIX 指数传播到 16:15 America/New_York；非官方日线额外等待至16:30，不能按普通美股16:00把当日日线提前视为完成。沿用已核实排定日历；特别提前收盘精确时刻未知时保留 unknown，不虚构分钟。
+
+quote与history仍有独立质量，但本工具的VIX/VXN报价与附带历史均来自所选同一日线序列，前收要求精确前一交易日在该序列中存在。缺失时不从别的来源补前收。源比较冲突写入daily_close_validation与warnings，不静默合并或强行取平均。历史新鲜度只表达日期，不代替上述跨源验证。
+
+官方CSV当天缺失而非CFD指数日线可得时，source标实际转发源，data_type=provider_daily_index_close。official_daily_file_confirmed与official_close_window_confirmed分别表达官方日线文件和收盘观测核验，二者不可混同。as_of保留null，不用抓取时刻或CSV日期虚构精确行情时间。
+
+新版波动率缓存用独立版本键，旧版盘中缓存不会被升级为日终收盘；已有D1记录不删除。上游全失败保留原fetched_at，retrieved_at为本次读取，过期记录继续stale。

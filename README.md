@@ -81,7 +81,7 @@
 - `freshness`：交易时段 / 日历与时效提示；已核实范围之外返回 `unknown`。
 - `instrument_changed=true`：备用源改变了品种口径，不能直接拼接为相同合约的历史。
 
-黄金优先为新浪 / 汇通网伦敦金现货 CFD；Gold API 备用源没有同源前值，日变化留空。布油的新浪备用源为 CFD，区别于 Yahoo 的近月连续期货。VIX / VXN 的 Cboe 备用源是官方日终值。
+黄金优先为新浪 / 汇通网伦敦金现货 CFD；Gold API 备用源没有同源前值，日变化留空。布油的新浪备用源为 CFD，区别于 Yahoo 的近月连续期货。VIX / VXN 统一读取已完成日线。VIX 的独立备源严格限定为 Investing 非 CFD 的 CBOE 指数日线；官方日线文件与收盘观测的核验结果分开返回，旧日期继续标 stale。
 
 ## 技术与运行
 
@@ -103,7 +103,7 @@ node scripts/check-public-source.mjs
 
 13 项全球指标。日韩报价优先 Yahoo，东方财富 / NAVER 提供同指数备用；日本已核实 2026–2027 日历及午休，韩国完整年度休市 / 特别时段尚未核实，明确返回不确定性。美股报价切换新浪后，按需历史可使用东方财富 / Nasdaq，FRED 备用。
 
-## 历史状态（Schema v1.5，服务 1.6.2）
+## 历史状态（Schema v1.5，服务 1.6.3）
 
 `quality` 保留为报价质量；历史必须单独读取 `history_quality`。`history_supported` 是支持路径的兼容能力别名，实际数据只看 `history_available` 和 `history_count`。空数组、失败或未请求不能被标为实际有历史。
 
@@ -147,3 +147,15 @@ node scripts/check-public-source.mjs
 1.6.1补充无人值守入口：站点服务访问用于私有`/api/security-archive`执行与回读，MCP仍走其独立OAuth；不混用权限、不改Secrets。详情见归档契约。
 
 [1.6.2生产归档与原生MCP完整验收](docs/SECURITY_ARCHIVE_REPORT.md)：含真实查询矩阵、20项归档、6页持久分页、价格/量额对账、剩余缺口与自动任务状态。
+
+## VIX / VXN 日终可靠性（1.6.3）
+
+HTTP 200 不表示日线已更新。比较 Yahoo 已完成日线、Cboe CSV 和独立备源日期，返回最新已完成日期的单一来源序列；不把盘中值拼入历史。快照新增 `volatility_date_consistency`；逐项新增 `daily_close_validation` / `source_attempts`，保留来源、日线日期、前收及降级信息。
+
+Investing 默认 VIX 页面为 CFD，适配器只接受明确验证的非 CFD CBOE 指数 `1096487`。VXN 的 FRED `VXNCLS` 有发布滞后及下载可用性限制。北京时间 09:00 是验收目标，无法保证第三方每日按时发布；未取得应有完整交易日时明确 stale。详见 [VIX 日线修复报告](docs/VIX_DAILY_CLOSE_REPORT.md)。
+
+```bash
+LIVE_VOLATILITY=1 npm test
+```
+
+该命令运行本地回归后，实际请求两个波动率指数的日线并打印日期、核验与失败证据，不修改生产主源。
