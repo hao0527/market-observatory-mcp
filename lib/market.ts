@@ -88,6 +88,17 @@ async function getMetric(item:Metric,refresh:boolean,shared:()=>Promise<Awaited<
  try{const vol=item.id==='vix'||item.id==='vxn';const saved=await loadQuote(vol?'global-daily-close-v1:'+item.id:'global:'+item.id,metricLoader(item,shared,sinaShared,asianShared),{refresh,...(vol?{cacheFresh:(p:any,age:number)=>p.daily_close_contract_version===1&&age<60000,acceptReplacement:(p:any,n:any)=>!(p.quote_kind==='daily_index_close'&&p.market_date>n.market_date)}:{})});const q=qualifyQuote(saved,item.kind);return temporalMetadata(vol?qualifyVolatility(q):q)}
  catch(error){const issue=dataIssue(error);return temporalMetadata({...item,value:null,change:null,change_percent:null,quality:'unavailable',error:issue.message,upstream_error:issue,fetched_at:null,retrieved_at:new Date().toISOString(),history:[],history_supported:false,stale:false})}
 }
+/** Bundle timestamps describe the saved metric records, never the cache delivery clock. */
+export function snapshotMetadata(metrics:any[],generatedAt=new Date(Date.now()).toISOString()){
+ const times=metrics.map(m=>typeof m.fetched_at==='string'?Date.parse(m.fetched_at):NaN).filter(Number.isFinite).sort((a,b)=>a-b);
+ const oldest=times.length?new Date(times[0]).toISOString():null,latest=times.length?new Date(times[times.length-1]).toISOString():null;
+ const counts=new Map<string,number>();
+ for(const m of metrics){const quality=typeof m.quality==='string'&&m.quality.trim()?m.quality:'unknown';counts.set(quality,(counts.get(quality)??0)+1)}
+ const known=['available','degraded','stale','unavailable','partial','unknown'];
+ return {generated_at:generatedAt,retrieved_at:generatedAt,fetched_at:latest,oldest_fetched_at:oldest,latest_fetched_at:latest,
+  fetched_at_semantics:'Compatibility alias of latest_fetched_at: latest successful metric fetch in this bundle; oldest_fetched_at and per-metric timestamps describe mixed ages. generated_at is bundle assembly time.',
+  coverage:{available:counts.get('available')??0,degraded:counts.get('degraded')??0,stale:counts.get('stale')??0,unavailable:counts.get('unavailable')??0,partial:counts.get('partial')??0,unknown:counts.get('unknown')??0,other:[...counts].filter(([quality])=>!known.includes(quality)).reduce((n,[,count])=>n+count,0),total:metrics.length,by_quality:Object.fromEntries(counts)}};
+}
 export async function snapshot(input:boolean|SnapshotOptions=false){
  const options:SnapshotOptions=typeof input==='boolean'?{refresh:input}:input;
  let treasury:ReturnType<typeof treasuryText>|undefined;const shared=()=>treasury??=treasuryText();
@@ -95,7 +106,7 @@ export async function snapshot(input:boolean|SnapshotOptions=false){
  let asian:Promise<any>|undefined;const asianShared=()=>asian??=fetchAsianBatch();
  let metrics=await Promise.all(catalog.map(item=>getMetric(item,options.refresh===true,shared,sinaShared,asianShared)));
  if(options.include_history)metrics=await Promise.all(metrics.map(m=>resolveHistory(m,options.refresh===true)));
- return {schema_version:'1.5',retrieved_at:new Date().toISOString(),fetched_at:new Date().toISOString(),cache_hit:metrics.every(m=>'delivery'in m&&m.delivery!=='upstream'),report_timezone:'Asia/Shanghai',volatility_date_consistency:volatilityDateConsistency(metrics),metrics:metrics.map(m=>presentMetric(m,options.include_history,options.include_raw)),coverage:{available:metrics.filter(m=>m.quality==='available').length,degraded:metrics.filter(m=>m.quality==='degraded').length,stale:metrics.filter(m=>m.quality==='stale').length,unavailable:metrics.filter(m=>m.quality==='unavailable').length,total:catalog.length},notes:['逐项fetched_at为上游成功读取时间；retrieved_at为本次工具返回时间。','degraded表示上游失败后返回最近成功数据，不能当作新报价。','默认不附带历史及原始字段；历史通过get_market_history按需读取。','黄金及布油备用源instrument_changed=true时不可拼接为同一品种/合约历史；VIX/VXN备用源为日终值。']};
+ return {schema_version:'1.5',...snapshotMetadata(metrics),cache_hit:metrics.every(m=>'delivery'in m&&m.delivery!=='upstream'),report_timezone:'Asia/Shanghai',volatility_date_consistency:volatilityDateConsistency(metrics),metrics:metrics.map(m=>presentMetric(m,options.include_history,options.include_raw)),notes:['逐项fetched_at为上游成功读取时间；retrieved_at为本次工具返回时间。','degraded表示上游失败后返回最近成功数据，不能当作新报价。','默认不附带历史及原始字段；历史通过get_market_history按需读取。','黄金及布油备用源instrument_changed=true时不可拼接为同一品种/合约历史；VIX/VXN备用源为日终值。']};
 }
 export async function marketHistory(id:string,refresh=false){
  const item=catalog.find(m=>m.id===id);if(!item)throw new DataError({code:'INVALID_ARGUMENT',message:'未知指标',retryable:false});

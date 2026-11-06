@@ -103,7 +103,7 @@ node scripts/check-public-source.mjs
 
 13 项全球指标。日韩报价优先 Yahoo，东方财富 / NAVER 提供同指数备用；日本已核实 2026–2027 日历及午休，韩国完整年度休市 / 特别时段尚未核实，明确返回不确定性。美股报价切换新浪后，按需历史可使用东方财富 / Nasdaq，FRED 备用。
 
-## 历史状态（Schema v1.5，服务 1.6.3）
+## 历史状态（Schema v1.5，服务 1.6.4）
 
 `quality` 保留为报价质量；历史必须单独读取 `history_quality`。`history_supported` 是支持路径的兼容能力别名，实际数据只看 `history_available` 和 `history_count`。空数组、失败或未请求不能被标为实际有历史。
 
@@ -159,3 +159,12 @@ LIVE_VOLATILITY=1 npm test
 ```
 
 该命令运行本地回归后，实际请求两个波动率指数的日线并打印日期、核验与失败证据，不修改生产主源。
+
+
+## 1.6.4 可靠性语义
+
+全球快照新增generated_at、oldest_fetched_at、latest_fetched_at。顶层fetched_at保留字段名，但纠正为latest_fetched_at的兼容别名；缓存读取不会使其更新。retrieved_at是本次返回，逐项fetched_at仍保持各自来源的采集时间。全无有效采集时间时这三个采集时间字段为null。前端“本次返回”改读retrieved_at。coverage保留原计数并补充partial/unknown/other和完整by_quality，不改变指标本身的质量。
+
+归档execution明确区分采集许可和未知的外部调度状态；backfill从全部未完成任务中发现已到期作业，不受recent_jobs最近8条限制。next_retry_at是允许重试时间，执行仍需调用方触发。定时任务暂停原因未知时不擅自恢复。详见[归档契约](docs/SECURITY_ARCHIVE.md)。
+
+FRED VXN真实隔离检查：LIVE_FRED_VXN=1 npm test。该检查只在本地令Yahoo/Cboe主源失败，FRED实际发起网络请求；日志status=blocked不等于真实读取成功。

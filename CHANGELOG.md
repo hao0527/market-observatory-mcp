@@ -1,3 +1,13 @@
+# 1.6.4 — 快照时间、质量汇总与全量待补采发现
+
+- 顶层fetched_at纠正为latest_fetched_at兼容别名，新增oldest_fetched_at/generated_at；缓存读取不重新标注成功采集时间，前端本次返回使用retrieved_at。
+- coverage保留原计数，新增partial/unknown/other及完整by_quality，未知状态也不会掉出总数。
+- 归档execution明确采集许可与外部调度状态独立；next_retry_at只是允许重试时间，不等同于已安排执行。
+- 新增backfill全量未完成任务查询，不受recent_jobs最近8条限制；当日优先、尊重退避、最多返回40个作业并标记截断。沿用现有D1表和执行通道，无迁移。
+- 35组快照缓存/故障/混合时间测试；波动率100组（新增6组FRED隔离路径），实际SQLite归档30组（新增9组旧任务发现及真实写入回读）。
+- FRED真实隔离检查单独记录网络阻塞；不将合成CSV或HTTP响应当作真实数据成功。
+- Schema保持1.5；工具数量和参数不变，所有者私有访问、Secrets与归档设置保持原样。
+
 # 1.6.3 — VIX 已完成日线日期选择与独立备源
 
 - HTTP 200 但日期落后时继续比较独立日线；选择最新已完成交易日，同日期优先官方 CSV。

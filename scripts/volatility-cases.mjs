@@ -157,6 +157,16 @@ export async function testVolatility({volatility:v,market,historyQuality,cache,m
   check(()=>assert.equal(kept.market_date,'2026-11-05'));
   check(()=>assert.equal(kept.history_degraded,true));
   check(()=>assert.equal(kept.history_refresh_error.code,'INCOMPLETE_HISTORY_REFRESH'));
+  // FRED series selection/parsing in isolation is distinct from the optional real network acceptance.
+  globalThis.fetch=async url=>url.includes('fredgraph')?response('observation_date,VXNCLS\n2026-11-03,30.53\n2026-11-04,25.08\n'):response('isolated primary failure',503);
+  const fred=await v.volatilityDaily('vxn');
+  check(()=>assert.equal(fred.source,'FRED'));
+  check(()=>assert.equal(new URL(fred.source_url).searchParams.get('id'),'VXNCLS'));
+  check(()=>assert.deepEqual(fred.history,[{date:'2026-11-03',value:30.53},{date:'2026-11-04',value:25.08}]));
+  check(()=>assert.equal(v.qualifyVolatility(fred).quality,'stale'));
+  check(()=>assert.equal(fred.previous_date,'2026-11-03'));
+  globalThis.fetch=async url=>url.includes('fredgraph')?response('observation_date,NASDAQCOM\n2026-11-04,25.08\n'):response('isolated primary failure',503);
+  await assert.rejects(v.volatilityDaily('vxn'),e=>e.issue.causes.some(c=>c.source==='FRED'&&c.code==='INVALID_RESPONSE'));checks++;
   console.log(`PASS: ${checks} volatility daily-close scenarios; stale-200 fallback, non-CFD identity, completed-only Yahoo, independent dates/previous close, official file vs observation, conflicts, 09:00/DST/holidays, durable failure/legacy isolation, VIX/VXN consistency and MCP adapter`);
  } finally {globalThis.fetch=originalFetch;Date.now=originalNow;cache.clearQuoteMemory()}
 }

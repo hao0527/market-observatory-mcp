@@ -17,7 +17,7 @@ export const mcpTools = [
     inputSchema:{type:'object',properties:{symbols:{type:'array',items:{type:'string'},minItems:1,maxItems:30},periods:{type:'array',items:{type:'string',enum:['1m','5m','15m','30m','60m','1d']}},enabled:{type:'boolean'}},additionalProperties:false},annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true},
   },
   {
-    name:'get_security_archive_status',description:'读取D1归档配置、持久化覆盖范围及近期作业；提供job_id读取逐日任务、缺失区间、失败与重试时间，提供fetch_id审计原始响应。所有成功采集时间保持原值，retrieved_at表示本次读取。',
+    name:'get_security_archive_status',description:'读取D1采集开关（不等于调度器启用）、持久化覆盖及近期作业；backfill从全部未完成任务发现已到期补采，next_retry_at仅为允许重试时间；提供job_id读取逐日任务、缺失区间、失败与重试时间，提供fetch_id审计原始响应。所有成功采集时间保持原值，retrieved_at表示本次读取。',
     inputSchema:{type:'object',properties:{job_id:{type:'string'},fetch_id:{type:'string'}},additionalProperties:false},annotations:{readOnlyHint:true},
   },
   {
@@ -57,7 +57,7 @@ export const mcpTools = [
 export async function callMarketTool(name: string, args: any = {}) {
   if (name === 'get_market_snapshot') return snapshot({refresh:args.refresh===true,include_history:args.include_history===true,include_raw:args.include_raw===true});
   if (name === 'get_market_catalog') return {
-    schema_version:'1.5', catalog, volatility_contract:volatilityContract, history_contract:historyContract, backup_sources:{volatility:'Cboe日线；VIX可用Investing非CFD CBOE指数日线，逐日交叉核验；Cboe收盘观测只作验证，不拼入历史；VXN有FRED VXNCLS备用，发布滞后仍标stale',us_indices:'新浪同一指数报价；历史按需使用独立东方财富/Nasdaq序列，FRED备用',asian_indices:'Yahoo指数；东方财富 / NAVER同一指数备用报价；东方财富/NAVER独立历史',brent:'新浪CFD备用报价，instrument_changed=true；不可拼接相同合约历史'}, security_quotes:securityQueryInfo, security_history:securityHistoryInfo, security_archive:securityArchiveInfo, freshness_policy:calendarPolicy, cache_policy:{normal_ttl_seconds:60,security_ttl_seconds:5,last_success_retention_days:14,storage:'D1 durable + bounded memory',degraded:'上游失败时返回最近成功数据，保留原fetched_at和行情时间；retrieved_at为本次返回时间'},
+    schema_version:'1.5', snapshot_contract:{fetched_at:'Compatibility alias of latest_fetched_at; never bundle generation time',oldest_fetched_at:'Oldest successful metric fetch in the bundle',latest_fetched_at:'Latest successful metric fetch in the bundle',generated_at:'Bundle assembly time',retrieved_at:'This response delivery time',coverage:'Mutually exclusive quote quality counts; by_quality is exhaustive; partial/unknown/other are explicit'},catalog, volatility_contract:volatilityContract, history_contract:historyContract, backup_sources:{volatility:'Cboe日线；VIX可用Investing非CFD CBOE指数日线，逐日交叉核验；Cboe收盘观测只作验证，不拼入历史；VXN有FRED VXNCLS备用，发布滞后仍标stale',us_indices:'新浪同一指数报价；历史按需使用独立东方财富/Nasdaq序列，FRED备用',asian_indices:'Yahoo指数；东方财富 / NAVER同一指数备用报价；东方财富/NAVER独立历史',brent:'新浪CFD备用报价，instrument_changed=true；不可拼接相同合约历史'}, security_quotes:securityQueryInfo, security_history:securityHistoryInfo, security_archive:securityArchiveInfo, freshness_policy:calendarPolicy, cache_policy:{normal_ttl_seconds:60,security_ttl_seconds:5,last_success_retention_days:14,storage:'D1 durable + bounded memory',degraded:'上游失败时返回最近成功数据，保留原fetched_at和行情时间；retrieved_at为本次返回时间'},
     gold: {primary:'新浪财经/汇通网伦敦金现货CFD', change_basis:'同源昨结参考价', fallback:'Gold API现货；无同源前值则不计算涨跌', previous_date:'上游未提供，不推测'},
     notes:['quality为quote_quality兼容别名；历史状态必须读取history_quality。','布伦特主源为BZ=F近月连续期货，备用为新浪CFD，二者不是已核实同一合约；美债为官方日终par yield。','全球指标历史沿用近期窗口；证券历史由get_security_history按区间获取；sync_security_history只归档可配置观察列表，不是全市场采集。','缺失/过期项必须在分析中明示，不能补造数值。'],
   };
@@ -78,7 +78,7 @@ export async function POST(req: Request) {
   if (id === undefined) return new Response(null, {status:202});
   let result: any;
   if (method === 'server/discover') result = {supportedVersions:['2026-07-28'], capabilities:{tools:{}}};
-  else if (method === 'initialize') result = {protocolVersion:params?.protocolVersion || '2026-07-28', serverInfo:{name:'asset-observatory', version:'1.6.3'}, capabilities:{tools:{}}};
+  else if (method === 'initialize') result = {protocolVersion:params?.protocolVersion || '2026-07-28', serverInfo:{name:'asset-observatory', version:'1.6.4'}, capabilities:{tools:{}}};
   else if (method === 'ping') result = {};
   else if (method === 'tools/list') result = {tools:mcpTools};
   else if (method === 'tools/call') {
