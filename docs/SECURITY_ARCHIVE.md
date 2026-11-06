@@ -82,3 +82,24 @@
 ### D1归档读取兼容修复（1.6.2）
 
 线上D1对较长LIKE/GLOB模式报`LIKE or GLOB pattern too complex`。旧缓存键前缀改用主键的上下界范围查询；不再使用LIKE。旧缓存导入是可选路径，其失败单独记录legacy_import错误，始终继续读取正式归档，不影响已持久化数据可读性。已归档数据和原采集时间均保留。增加真实SQLite的长中文前缀检索、可选旧缓存导入异常隔离回归；最终以生产D1的归档分页回读确认。
+
+
+## 1.6.4：执行状态与全量待补采发现
+
+settings.enabled仅允许采集，不证明外部调度正在运行。configure/get_status/sync新增execution，collection_enabled为该开关的只读表达；scheduler_status=unknown、scheduler_verified=false，因为本站Worker无法核实Sites/Automations状态。调用方需独立读取实际任务的is_enabled与next_run_time。单日job.complete不代表长期周期任务应停用。
+
+next_retry_at表示最早允许重试时间，不是已经安排的执行时间。Worker没有自动重试定时器；只有外部调用sync才执行。原recent_jobs保留最近8项活动记录，新增backfill直接查询所有未完成任务：
+
+- pending_jobs/pending_tasks：全部未完成数量。
+- due_jobs/due_tasks：queued或已到next_retry_at的可重试数量。
+- blocked_tasks：日历未核实、未知状态或缺少有效重试时间的任务，不宣称可自动执行。
+- jobs：最多40个当前可执行作业，优先请求范围结束于当日的作业，其后按最早到期排列。due_task_count等字段由当前任务表计算，不依赖作业摘要是否在崩溃前更新。
+- truncated：仍有未返回的到期作业；不能把列表为空/截断误当全部完成。
+
+没有新表或迁移，也不改现有记录。归档设置停用时sync仍为no-op。暂停外部任务不会自动修改settings.enabled；这两个独立开关不应互相伪装。
+
+### 调用方执行流程
+
+先读取Catalog及归档状态，保留配置。若collection_enabled=false，停止自动采集。先用sync_security_history(max_tasks:1,retry_missing:false)建立/续跑当日任务，处理queued；再重新读取backfill.jobs，按job_id、max_tasks:1、retry_missing:true补采已到期任务。每次补采后重新读状态，遵守新退避时间；每轮总计最多40次sync调用，在平台运行时限内结束，不循环等待未来截止时间。最终回读任务和D1数量，报告剩余缺口及允许重试时间。
+
+这是可调用的有限补采路径，不是分钟级自动唤醒承诺。现有每日一次调度可能错过短保留窗口内的重试；若需要更及时补采，应在用户确认后调整现有调度的有限重试执行频率，不能仅新增next_retry_at字段声称已部署补采调度。暂停状态及未知停用原因应如实保留并报告。

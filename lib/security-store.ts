@@ -10,6 +10,10 @@ export interface ArchiveFetch {
 }
 export interface ArchiveTask {key:string;symbol:string;period:SecurityPeriod;date:string;status:string;attempts:number;next_retry_at:string|null;[key:string]:unknown}
 export interface ArchiveJob {id:string;status:string;created_at:string;updated_at:string;request:Record<string,unknown>;[key:string]:unknown}
+export interface ArchiveBackfill {
+ pending_jobs:number;pending_tasks:number;due_jobs:number;due_tasks:number;blocked_tasks:number;next_retry_at:string|null;
+ jobs:Array<ArchiveJob&{due_task_count:number;pending_task_count:number;oldest_due_at:string|null}>;limit:number;truncated:boolean;
+}
 export interface SecurityArchiveStore {
  readBars(symbol:string,period:string,source:string,start:string,end:string):Promise<{bars:SecurityBar[];name:string|null}>;
  saveFetch(fetch:ArchiveFetch):Promise<number>;
@@ -17,6 +21,7 @@ export interface SecurityArchiveStore {
  settings():Promise<ArchiveSettings|null>;saveSettings(settings:ArchiveSettings):Promise<void>;
  createJob(job:ArchiveJob,tasks:ArchiveTask[]):Promise<void>;
  job(id:string):Promise<ArchiveJob|null>;recentJobs():Promise<ArchiveJob[]>;
+ pendingJobs(now:string,today:string,limit:number):Promise<ArchiveBackfill>;
  tasks(id:string):Promise<ArchiveTask[]>;saveTask(id:string,task:ArchiveTask):Promise<void>;
  claim(id:string,now:string,until:string):Promise<boolean>;finish(job:ArchiveJob):Promise<void>;
  audit(id:string):Promise<unknown>;stats():Promise<unknown>;

@@ -45,6 +45,24 @@ export function createSecurityArchive(db?:D1Database):SecurityArchiveStore|null 
   },
   async job(id){return parse(await db.prepare('SELECT payload FROM security_archive_jobs WHERE id=?').bind(id).first<{payload:string}>())},
   async recentJobs(){return (await all<{payload:string}>('SELECT payload FROM security_archive_jobs ORDER BY updated_at DESC LIMIT 8')).map(r=>JSON.parse(r.payload))},
+  async pendingJobs(now,today,limit){
+   // Discover unfinished work from the entire task table, not the eight-row activity feed.
+   const next="json_extract(t.payload,'$.next_retry_at')";
+   const due=`(t.status='queued' OR (t.status IN ('partial','failed','not_ready') AND julianday(${next})<=julianday(?)))`;
+   const summary=await db.prepare(`SELECT count(*) AS pending_tasks,count(DISTINCT t.job_id) AS pending_jobs,
+    sum(CASE WHEN ${due} THEN 1 ELSE 0 END) AS due_tasks,
+    count(DISTINCT CASE WHEN ${due} THEN t.job_id END) AS due_jobs,
+    sum(CASE WHEN t.status!='queued' AND (t.status NOT IN ('partial','failed','not_ready') OR julianday(${next}) IS NULL) THEN 1 ELSE 0 END) AS blocked_tasks,
+    min(CASE WHEN julianday(${next}) IS NOT NULL THEN ${next} END) AS next_retry_at
+    FROM security_archive_tasks t WHERE t.status NOT IN ('complete','non_trading_day')`).bind(now,now).first<{pending_tasks:number;pending_jobs:number;due_tasks:number|null;due_jobs:number;blocked_tasks:number|null;next_retry_at:string|null}>();
+   const rows=await all<{payload:string;due_task_count:number;pending_task_count:number;oldest_due_at:string|null}>(`SELECT j.payload,count(*) AS pending_task_count,
+    sum(CASE WHEN ${due} THEN 1 ELSE 0 END) AS due_task_count,
+    min(CASE WHEN ${due} THEN coalesce(${next},j.created_at) END) AS oldest_due_at
+    FROM security_archive_jobs j JOIN security_archive_tasks t ON t.job_id=j.id
+    WHERE t.status NOT IN ('complete','non_trading_day') GROUP BY j.id HAVING due_task_count>0
+    ORDER BY CASE WHEN json_extract(j.payload,'$.request.end_date')=? THEN 0 ELSE 1 END,oldest_due_at,j.created_at,j.id LIMIT ?`,now,now,today,limit);
+   return {pending_jobs:summary?.pending_jobs??0,pending_tasks:summary?.pending_tasks??0,due_jobs:summary?.due_jobs??0,due_tasks:summary?.due_tasks??0,blocked_tasks:summary?.blocked_tasks??0,next_retry_at:summary?.next_retry_at??null,jobs:rows.map(r=>({...JSON.parse(r.payload),due_task_count:r.due_task_count,pending_task_count:r.pending_task_count,oldest_due_at:r.oldest_due_at})),limit,truncated:(summary?.due_jobs??0)>rows.length};
+  },
   async tasks(id){return (await all<{payload:string}>('SELECT payload FROM security_archive_tasks WHERE job_id=? ORDER BY task_key',id)).map(r=>JSON.parse(r.payload))},
   async saveTask(id,t){await db.prepare('UPDATE security_archive_tasks SET status=?,payload=? WHERE job_id=? AND task_key=?').bind(t.status,JSON.stringify(t),id,t.key).run()},
   async claim(id,now,until){const r=await db.prepare('UPDATE security_archive_jobs SET lease_until=? WHERE id=? AND lease_until<?').bind(until,id,now).run();return r.meta.changes===1},

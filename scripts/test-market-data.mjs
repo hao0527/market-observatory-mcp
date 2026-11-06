@@ -8,6 +8,7 @@ import ts from 'typescript';
 import {testHistoryQuality} from './history-quality-cases.mjs';
 import {testSecurityHistory} from './security-history-cases.mjs';
 import {testVolatility} from './volatility-cases.mjs';
+import {testSnapshotMetadata} from './snapshot-metadata-cases.mjs';
 const dir = await mkdtemp(join(tmpdir(), 'asset-data-test-'));
 const realFetch = globalThis.fetch;
 const realNow = Date.now;
@@ -247,6 +248,7 @@ try {
   console.log('PASS: durable fallback with original timestamps, retry bounds, US sessions/holidays/DST/early close, Treasury publishing window, compact snapshots, isolated history, partial source failure');
   await testSecurityHistory({securityHistory,calendar:securityCalendar,cache,mcp,upstream});
   await testVolatility({volatility,market,historyQuality,cache,mcp});
+  await testSnapshotMetadata({market,cache});
   if(process.env.LIVE_VOLATILITY==='1'){
     globalThis.fetch=realFetch;Date.now=realNow;cache.clearQuoteMemory();
     const live=[];
@@ -258,6 +260,15 @@ try {
       assert.equal(h.quote_kind,'daily_index_close');assert.equal(h.as_of,null);
     }
     assert.equal(live[0].market_date,live[1].market_date);
+  }
+  if(process.env.LIVE_FRED_VXN==='1'){
+    Date.now=realNow;cache.clearQuoteMemory();
+    globalThis.fetch=async(url,options)=>String(url).includes('finance.yahoo.com')||String(url).includes('cdn.cboe.com')?new Response('isolated primary failure',{status:503}):realFetch(url,options);
+    try{
+      const h=await volatility.volatilityDaily('vxn');assert.equal(h.source,'FRED');assert(h.history.length>1);assert(h.history.every(p=>Number.isFinite(p.value)&&p.value>0));
+      console.log(JSON.stringify({fred_vxn_real:{status:'records',source:h.source,source_url:h.source_url,count:h.history.length,first_date:h.history[0].date,market_date:h.market_date,expected_date:h.daily_close_expected_date,quality:volatility.qualifyVolatility(h).quality,fetched_at:h.fetched_at,source_attempts:h.source_attempts}}));
+    }catch(error){console.log(JSON.stringify({fred_vxn_real:{status:'blocked',real_read_passed:false,error:upstream.dataIssue(error),note:'Only Yahoo/Cboe failures are simulated; FRED transport is real. This is not a successful live fallback acceptance.'}}))}
+    globalThis.fetch=realFetch;
   }
   if(process.env.LIVE_FALLBACKS==='1'){
     globalThis.fetch=async(url,options)=>url.includes('push2his.eastmoney.com')||url.includes('api.nasdaq.com')?new Response('',{status:503}):realFetch(url,options);Date.now=realNow;cache.clearQuoteMemory();

@@ -163,3 +163,10 @@ pnpm dev
 读取SECURITY_ARCHIVE.md，应用新增0001迁移后，确认生产DB绑定。部署完成调用configure_security_archive保存自己的观察列表；调用sync_security_history逐批完成归档（用job_id恢复），调用get_security_archive_status及get_security_history回读。必须通过站点支持的服务访问独立验收写入授权，不能只在本地内存验证。再通过当前Sites调度流程创建自己的16:05 Asia/Shanghai工作日任务，先检查已有automations以免重复。定时任务按配置采当日，补采最近失败作业；服务凭据只即时获取，不能存入任务提示词。保存任务不等于未来执行成功。未完成的新年份日历须明确unknown并停止声称完整归档。
 
 npm run test:cache同时运行真实SQLite归档测试，涵盖迁移、持久化重开、分页、来源隔离和中断恢复。在线验收脚本verify-security-archive-online.mjs的archive模式会写入2026-11-05的实际历史；其他日期按所需调整脚本后验证，不要不看日期重复运行。
+
+
+## 1.6.4 调度与补采验收
+
+settings.enabled只表示服务允许采集。必须另查Sites/Automations的实际任务is_enabled、next_run_time；无法核实原因的暂停应保留，不因单日job完成而关闭长期计划，也不重复创建相同任务。get_security_archive_status.backfill.jobs是全量待处理发现入口；recent_jobs只是最近8条活动。
+
+执行按docs/SECURITY_ARCHIVE.md的有限流程：当日queued优先，然后刷新到期清单按job_id补采，每轮最多40批，尊重新退避。在调度暂停期间可以按明确授权手动验证writer，但不能把手动成功宣称为自动调度已运行。平台无法提供分钟级自动重试时记录限制，不增加另一套数据库或伪造自动执行状态。

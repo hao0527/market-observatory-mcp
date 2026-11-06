@@ -80,5 +80,33 @@ try{
  // Invalid raw rows survive auditing but never enter the archive.
  Date.now=()=>Date.parse(now);cache.clearQuoteMemory();globalThis.fetch=async url=>url.includes('gtimg')?new Response('',{status:520}):Response.json({rc:0,data:{code:'920002',market:0,name:'fixture',klines:['2026-11-05,10,11,12,9,123,123000','2026-11-04,10,11,1,9,123,123000']}});
  const rejected=await run(()=>h.getSecurityHistory({...query,symbol:'bj920002',period:'1d',start_date:'2026-11-04'}));assert.equal(rejected.rejected_count,1);assert.equal(rejected.rejection_reasons.invalid_ohlc,1);const audit=db.prepare("SELECT payload FROM security_history_fetches WHERE symbol='bj920002' AND source='东方财富' AND security_name IS NOT NULL").get();assert.equal(JSON.parse(audit.payload).raw.data.klines.length,2);checks++;
+ // Pending discovery must not lose an old partial job behind the eight-row activity feed.
+ Date.now=()=>Date.parse(now);cache.clearQuoteMemory();
+ const oldId='1'.repeat(64),waitingId='2'.repeat(64),blockedId='3'.repeat(64),queuedId='4'.repeat(64);
+ const oldRequest={symbols:['sh563360'],periods:['1m'],start_date:'2026-11-04',end_date:'2026-11-04',adjust:'none',force_refresh:false};
+ const oldRows=stamps('1m','2026-11-04','2026-11-04');
+ globalThis.fetch=async url=>url.includes('gtimg')?new Response('',{status:520}):reply('sh563360','1m',oldRows.slice(161));
+ const seed=await run(()=>h.getSecurityHistory({symbol:'sh563360',period:'1m',start_date:'2026-11-04',end_date:'2026-11-04',adjust:'none',refresh:true,limit:500}));
+ assert.equal(seed.pagination.total_count,79);checks++;
+ const oldTask={key:'2026-11-04:sh563360:1m',symbol:'sh563360',period:'1m',date:'2026-11-04',status:'partial',attempts:2,next_retry_at:'2026-11-05T08:00:00Z',received_count:79,persisted_count:79};
+ const oldJob={id:oldId,status:'partial',request:oldRequest,created_at:'2026-11-04T08:30:00Z',updated_at:'2026-11-04T08:30:00Z'};
+ await store.createJob(oldJob,[oldTask]);
+ for(let i=0;i<10;i++){const id=(1000+i).toString(16).padStart(64,'0');await store.createJob({...oldJob,id,status:'complete',created_at:now,updated_at:now},[{...oldTask,status:'complete',next_retry_at:null}])}
+ await store.createJob({...oldJob,id:waitingId},[{...oldTask,next_retry_at:'2026-11-05T09:00:00Z'}]);
+ await store.createJob({...oldJob,id:blockedId},[{...oldTask,status:'calendar_unverified',next_retry_at:null}]);
+ await store.createJob({...oldJob,id:queuedId,status:'interrupted',request:{...oldRequest,end_date:'2026-11-05'}},[{...oldTask,status:'queued',next_retry_at:null}]);
+ const discovery=await store.pendingJobs(now,'2026-11-05',40);
+ assert(!(await store.recentJobs()).some(j=>j.id===oldId));assert(discovery.jobs.some(j=>j.id===oldId));checks++;
+ assert(!discovery.jobs.some(j=>j.id===waitingId));assert(!discovery.jobs.some(j=>j.id===blockedId));assert(discovery.blocked_tasks>=1);checks++;
+ assert.equal(discovery.jobs[0].id,queuedId);assert.equal(discovery.jobs[0].due_task_count,1);checks++;
+ const limited=await store.pendingJobs(now,'2026-11-05',1);assert.equal(limited.jobs.length,1);assert.equal(limited.truncated,true);assert(limited.due_jobs>1);checks++;
+ const settingsBefore=await store.settings(),taskBefore=await store.tasks(oldId);
+ const state=await run(()=>a.getSecurityArchiveStatus({}));assert.equal(state.execution.collection_enabled,true);assert.equal(state.execution.scheduler_status,'unknown');assert.equal(state.execution.scheduler_verified,false);assert.equal(state.execution.next_retry_at_semantics,'earliest_allowed_retry_not_scheduled_execution');assert(state.backfill.jobs.some(j=>j.id===oldId));assert.deepEqual(await store.settings(),settingsBefore);assert.deepEqual(await store.tasks(oldId),taskBefore);checks++;
+ // Actually run the discovered old task through the writer and read 240 rows back from SQLite.
+ cache.clearQuoteMemory();globalThis.fetch=async()=>reply('sh563360','1m',oldRows);
+ const recovered=await run(()=>a.syncSecurityHistory({job_id:oldId,max_tasks:1}));assert.equal(recovered.processed_this_call,1);assert.equal(recovered.complete,true);assert.equal((await store.readBars('sh563360','1m','东方财富','2026-11-04','2026-11-04')).bars.length,240);assert(!(await store.pendingJobs(now,'2026-11-05',40)).jobs.some(j=>j.id===oldId));checks++;
+ const remaining=await store.pendingJobs('2026-11-05T09:00:00Z','2026-11-05',40);assert(remaining.jobs.some(j=>j.id===waitingId));checks++;
+ // The collection switch does not control a scheduler; disabled collection remains a no-op.
+ await run(()=>a.configureSecurityArchive({enabled:false}));const disabled=await run(()=>a.syncSecurityHistory({job_id:queuedId,max_tasks:1}));assert.equal(disabled.status,'disabled');assert.equal(disabled.execution.collection_enabled,false);assert.equal(disabled.execution.scheduler_status,'unknown');assert.equal((await store.tasks(queuedId))[0].status,'queued');checks++;
  console.log(`PASS: ${checks} archive scenarios using actual SQLite + production D1 SQL; durable reopen, 1008-bar pagination, original timestamps, 319→480 backfill, source isolation, raw audit, quality protection, jobs/idempotence/lease/backoff, calendar and rejection states`);
 }finally{globalThis.fetch=originalFetch;Date.now=originalNow;db?.close();await rm(dir,{recursive:true,force:true})}
